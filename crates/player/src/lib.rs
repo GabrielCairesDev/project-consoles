@@ -1,15 +1,17 @@
-//! Janela nativa que executa um jogo de Master System.
+//! Janela nativa que executa um jogo (Master System ou Mega Drive).
 //!
 //! Roda num processo próprio, iniciado pelo launcher: o event loop do winit
 //! precisa da thread principal (no macOS só pode existir um por processo) e
 //! um travamento aqui não derruba a biblioteca.
 //!
-//! Controles: configuráveis por [`controls::Bindings`] (padrão: setas,
-//! Z = botão 1, X = botão 2, Enter = Pause). Esc sempre fecha o jogo.
+//! Controles: configuráveis por [`controls::Bindings`], com padrões por
+//! console. Esc sempre fecha o jogo.
 
 mod audio;
 pub mod controls;
+mod machine;
 mod ring;
+mod rom;
 mod video;
 
 use std::fmt;
@@ -18,7 +20,6 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use sms::{Console, Joypad, SCREEN_HEIGHT, SCREEN_WIDTH};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
@@ -27,9 +28,11 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use audio::AudioOut;
-use controls::{Action, Bindings};
+use controls::Bindings;
+use machine::{MAX_FRAME, Machine, MachineError};
+use rom::RomReadError;
 
-/// Taxa usada quando não há áudio: o PSG precisa de alguma taxa de saída.
+/// Taxa usada quando não há áudio: os chips precisam de alguma taxa de saída.
 const FALLBACK_SAMPLE_RATE: u32 = 44_100;
 /// Escala inicial da janela.
 const INITIAL_SCALE: u32 = 3;
@@ -39,8 +42,8 @@ const MAX_CATCH_UP_FRAMES: u32 = 3;
 
 #[derive(Debug)]
 pub enum PlayerError {
-    ReadRom(std::io::Error),
-    Rom(sms::RomError),
+    ReadRom(RomReadError),
+    Rom(MachineError),
     EventLoop(winit::error::EventLoopError),
     Window(winit::error::OsError),
     Surface(softbuffer::SoftBufferError),
@@ -62,7 +65,8 @@ impl fmt::Display for PlayerError {
 
 impl std::error::Error for PlayerError {}
 
-/// Abre a janela e executa o jogo até o usuário fechá-la.
+/// Abre a janela e executa o jogo até o usuário fechá-la. O console é o
+/// de `bindings` ([`Bindings::system`]); a ROM pode estar num `.zip`.
 ///
 /// Com `state_path`, o jogo continua do estado salvo nesse arquivo (se
 /// existir e for desta ROM) e o estado é gravado nele ao fechar.
@@ -71,7 +75,8 @@ pub fn run(
     bindings: Bindings,
     state_path: Option<PathBuf>,
 ) -> Result<(), PlayerError> {
-    let rom = std::fs::read(rom_path).map_err(PlayerError::ReadRom)?;
+    let system = bindings.system();
+    let rom = rom::read(rom_path, system).map_err(PlayerError::ReadRom)?;
     let audio = match AudioOut::open() {
         Ok(audio) => Some(audio),
         Err(reason) => {
@@ -82,29 +87,29 @@ pub fn run(
     let sample_rate = audio
         .as_ref()
         .map_or(FALLBACK_SAMPLE_RATE, |a| a.sample_rate);
-    let mut console = Console::new(rom, sample_rate).map_err(PlayerError::Rom)?;
+    let mut machine = Machine::new(system, rom, sample_rate).map_err(PlayerError::Rom)?;
     if let Some(path) = &state_path {
-        resume(&mut console, path);
+        resume(&mut machine, path);
     }
-    let title = rom_path.file_stem().map_or_else(
-        || "Master System".to_owned(),
-        |s| s.to_string_lossy().into_owned(),
-    );
+    let title = rom_path
+        .file_stem()
+        .map_or_else(|| "Jogo".to_owned(), |s| s.to_string_lossy().into_owned());
+    let frame_duration = Duration::from_secs_f64(1.0 / machine.frame_rate());
 
     let event_loop = EventLoop::new().map_err(PlayerError::EventLoop)?;
     let context = softbuffer::Context::new(event_loop.owned_display_handle())
         .map_err(PlayerError::Surface)?;
     let mut app = App {
         title,
-        console,
+        machine,
         audio,
         audio_scratch: Vec::new(),
+        mono_scratch: Vec::new(),
         context,
         window: None,
         bindings,
-        joypad: Joypad::default(),
         state_path,
-        frame_duration: Duration::from_secs_f64(1.0 / sms::FRAME_RATE),
+        frame_duration,
         next_frame: Instant::now(),
         error: None,
     };
@@ -121,13 +126,13 @@ struct GameWindow {
 
 struct App {
     title: String,
-    console: Console,
+    machine: Machine,
     audio: Option<AudioOut>,
     audio_scratch: Vec<f32>,
+    mono_scratch: Vec<f32>,
     context: softbuffer::Context<OwnedDisplayHandle>,
     window: Option<GameWindow>,
     bindings: Bindings,
-    joypad: Joypad,
     state_path: Option<PathBuf>,
     frame_duration: Duration,
     next_frame: Instant,
@@ -141,14 +146,13 @@ impl App {
     }
 
     fn create_window(&self, event_loop: &ActiveEventLoop) -> Result<GameWindow, PlayerError> {
-        let size = LogicalSize::new(
-            SCREEN_WIDTH as u32 * INITIAL_SCALE,
-            SCREEN_HEIGHT as u32 * INITIAL_SCALE,
-        );
+        // Mesmo tamanho para todos os consoles: o quadro é centralizado.
+        let (width, height) = (MAX_FRAME.0 as u32, MAX_FRAME.1 as u32);
+        let size = LogicalSize::new(width * INITIAL_SCALE, height * INITIAL_SCALE);
         let attributes = Window::default_attributes()
             .with_title(&self.title)
             .with_inner_size(size)
-            .with_min_inner_size(LogicalSize::new(SCREEN_WIDTH as u32, SCREEN_HEIGHT as u32));
+            .with_min_inner_size(LogicalSize::new(width, height));
         let window = Rc::new(
             event_loop
                 .create_window(attributes)
@@ -160,10 +164,10 @@ impl App {
     }
 
     fn run_frame(&mut self) {
-        self.console.set_input(self.joypad);
-        self.console.run_frame();
+        self.machine.run_frame();
         self.audio_scratch.clear();
-        self.console.drain_audio(&mut self.audio_scratch);
+        self.machine
+            .drain_audio(&mut self.audio_scratch, &mut self.mono_scratch);
         if let Some(audio) = &mut self.audio {
             audio.push(&self.audio_scratch);
         }
@@ -184,9 +188,11 @@ impl App {
             .resize(width, height)
             .map_err(PlayerError::Surface)?;
         let mut buffer = game.surface.buffer_mut().map_err(PlayerError::Surface)?;
+        let frame = self.machine.frame();
         video::blit(
-            self.console.framebuffer(),
-            (SCREEN_WIDTH, SCREEN_HEIGHT),
+            frame.pixels,
+            frame.stride,
+            frame.size,
             &mut buffer,
             (width.get() as usize, height.get() as usize),
         );
@@ -200,21 +206,23 @@ impl App {
         let pressed = event.state == ElementState::Pressed;
         match code {
             KeyCode::Escape if pressed => event_loop.exit(),
-            _ => match self.bindings.action_for(code) {
-                Some(Action::Pause) if pressed && !event.repeat => self.console.press_pause(),
-                Some(action) => set_button(&mut self.joypad, action, pressed),
-                None => {}
-            },
+            // Repetição do teclado não aperta de novo (o Pause é uma borda).
+            _ if event.repeat => {}
+            _ => {
+                if let Some(action) = self.bindings.action_for(code) {
+                    self.machine.set_action(action, pressed);
+                }
+            }
         }
     }
 }
 
 /// Carrega o estado salvo, se houver. Estado inválido (outra versão,
 /// corrompido) não impede o jogo: começa do início e será sobrescrito.
-fn resume(console: &mut Console, path: &Path) {
+fn resume(machine: &mut Machine, path: &Path) {
     match std::fs::read(path) {
         Ok(bytes) => {
-            if let Err(e) = console.load_state(&bytes) {
+            if let Err(e) = machine.load_state(&bytes) {
                 eprintln!("estado salvo ignorado ({}): {e}", path.display());
             }
         }
@@ -240,7 +248,7 @@ impl ApplicationHandler for App {
         let Some(path) = &self.state_path else {
             return;
         };
-        if let Err(e) = write_state(path, &self.console.save_state()) {
+        if let Err(e) = write_state(path, &self.machine.save_state()) {
             self.error.get_or_insert(PlayerError::SaveState(e));
         }
     }
@@ -269,7 +277,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::KeyboardInput { event, .. } => self.handle_key(event_loop, &event),
             // Sem foco, nenhuma tecla fica "presa".
-            WindowEvent::Focused(false) => self.joypad = Joypad::default(),
+            WindowEvent::Focused(false) => self.machine.release_all(),
             _ => {}
         }
     }
@@ -298,36 +306,26 @@ impl ApplicationHandler for App {
     }
 }
 
-/// Aplica uma ação do controle ao estado dos botões (Pause não é botão do
-/// controle: vira NMI em `handle_key`).
-fn set_button(joypad: &mut Joypad, action: Action, pressed: bool) {
-    let button = match action {
-        Action::Up => &mut joypad.up,
-        Action::Down => &mut joypad.down,
-        Action::Left => &mut joypad.left,
-        Action::Right => &mut joypad.right,
-        Action::Button1 => &mut joypad.button1,
-        Action::Button2 => &mut joypad.button2,
-        Action::Pause => return,
-    };
-    *button = pressed;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use controls::System;
+
+    fn sms_machine(rom: Vec<u8>) -> Machine {
+        Machine::new(System::MasterSystem, rom, 44_100).expect("ROM válida")
+    }
 
     #[test]
     fn state_file_round_trips_and_resumes() {
         let dir = tempfile::tempdir().expect("pasta temporária");
         let path = dir.path().join("saves/jogo.state");
         let rom = vec![0x18, 0xFE]; // JR $
-        let mut console = Console::new(rom.clone(), 44_100).expect("ROM válida");
+        let mut console = sms_machine(rom.clone());
         console.run_frame();
         write_state(&path, &console.save_state()).expect("grava");
         assert!(!path.with_extension("state.tmp").exists());
 
-        let mut resumed = Console::new(rom, 44_100).expect("ROM válida");
+        let mut resumed = sms_machine(rom);
         resume(&mut resumed, &path);
         assert_eq!(resumed.save_state(), console.save_state());
     }
@@ -335,9 +333,9 @@ mod tests {
     #[test]
     fn invalid_or_missing_state_starts_fresh() {
         let dir = tempfile::tempdir().expect("pasta temporária");
-        let fresh = Console::new(vec![0x18, 0xFE], 44_100).expect("ROM válida");
+        let fresh = sms_machine(vec![0x18, 0xFE]);
 
-        let mut console = fresh.clone();
+        let mut console = sms_machine(vec![0x18, 0xFE]);
         resume(&mut console, &dir.path().join("nao-existe.state"));
         assert_eq!(console.save_state(), fresh.save_state());
 
@@ -345,23 +343,5 @@ mod tests {
         std::fs::write(&corrupted, b"lixo").expect("escrita");
         resume(&mut console, &corrupted);
         assert_eq!(console.save_state(), fresh.save_state());
-    }
-
-    #[test]
-    fn actions_map_to_joypad() {
-        let mut joypad = Joypad::default();
-        set_button(&mut joypad, Action::Left, true);
-        set_button(&mut joypad, Action::Button1, true);
-        set_button(&mut joypad, Action::Pause, true);
-        assert_eq!(
-            joypad,
-            Joypad {
-                left: true,
-                button1: true,
-                ..Joypad::default()
-            }
-        );
-        set_button(&mut joypad, Action::Left, false);
-        assert!(!joypad.left);
     }
 }

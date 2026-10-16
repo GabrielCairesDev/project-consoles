@@ -5,11 +5,12 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use player::controls::Bindings;
-use project_consoles_lib::runtime::{KEYS_FLAG, PLAY_FLAG, STATE_FLAG};
+use player::controls::{Bindings, System};
+use project_consoles_lib::runtime::{CONSOLE_FLAG, KEYS_FLAG, PLAY_FLAG, STATE_FLAG};
 
 /// O mesmo binário é o launcher e, com
-/// `--play <rom> [--keys <mapa>] [--state <arquivo>]`, o processo do jogo
+/// `--play <rom> --console <id> [--keys <mapa>] [--state <arquivo>]`, o
+/// processo do jogo
 /// (ver `crates/player`): sem sidecar, igual em dev e no pacote final.
 fn main() -> ExitCode {
     let mut args = std::env::args_os().skip(1);
@@ -41,22 +42,24 @@ struct PlayOptions {
     state: Option<PathBuf>,
 }
 
-/// `--keys <mapa>` e `--state <arquivo>`, ambos opcionais; sem `--keys`
-/// valem as teclas padrão, sem `--state` o progresso não é salvo.
+/// `--console <id>` (obrigatório), `--keys <mapa>` e `--state <arquivo>`;
+/// sem `--keys` valem as teclas padrão do console, sem `--state` o
+/// progresso não é salvo.
 fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions, String> {
-    let mut options = PlayOptions {
-        bindings: Bindings::default(),
-        state: None,
-    };
+    let mut system = None;
+    let mut keys = None;
+    let mut state = None;
     while let Some(flag) = args.next() {
         let value = args
             .next()
             .ok_or_else(|| format!("falta o valor de {}", flag.to_string_lossy()))?;
-        if flag == KEYS_FLAG {
-            let spec = value.to_str().ok_or("mapa de teclas inválido")?;
-            options.bindings = Bindings::parse_arg(spec).map_err(|e| e.to_string())?;
+        if flag == CONSOLE_FLAG {
+            let id = value.to_str().ok_or("console inválido")?;
+            system = Some(System::from_id(id).ok_or_else(|| format!("console sem núcleo: {id}"))?);
+        } else if flag == KEYS_FLAG {
+            keys = Some(value.into_string().map_err(|_| "mapa de teclas inválido")?);
         } else if flag == STATE_FLAG {
-            options.state = Some(PathBuf::from(value));
+            state = Some(PathBuf::from(value));
         } else {
             return Err(format!(
                 "argumento desconhecido: {}",
@@ -64,12 +67,17 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
             ));
         }
     }
-    Ok(options)
+    let system = system.ok_or_else(|| format!("falta {CONSOLE_FLAG}"))?;
+    let bindings = match keys {
+        Some(spec) => Bindings::parse_arg(system, &spec).map_err(|e| e.to_string())?,
+        None => Bindings::defaults(system),
+    };
+    Ok(PlayOptions { bindings, state })
 }
 
 fn usage() -> ExitCode {
     eprintln!(
-        "uso: {PLAY_FLAG} <caminho da ROM> [{KEYS_FLAG} <ação=tecla,...>] [{STATE_FLAG} <arquivo>]"
+        "uso: {PLAY_FLAG} <caminho da ROM> {CONSOLE_FLAG} <id> [{KEYS_FLAG} <ação=tecla,...>] [{STATE_FLAG} <arquivo>]"
     );
     ExitCode::from(2)
 }

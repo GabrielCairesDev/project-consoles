@@ -1,4 +1,4 @@
-//! Mapeamento de teclas para os controles do Master System.
+//! Mapeamento de teclas para os controles de cada console.
 //!
 //! As teclas usam os nomes do padrão W3C UI Events (`KeyboardEvent.code`,
 //! como `"ArrowUp"` e `"KeyZ"`): a interface web captura exatamente esses
@@ -10,7 +10,75 @@ use std::fmt;
 
 use winit::keyboard::KeyCode;
 
-/// Ação do controle (ou do console, no caso do Pause).
+/// Console com núcleo próprio; define as ações do controle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum System {
+    MasterSystem,
+    Genesis,
+}
+
+impl System {
+    pub const ALL: [System; 2] = [System::MasterSystem, System::Genesis];
+
+    /// Identificador do console no catálogo do launcher.
+    pub fn id(self) -> &'static str {
+        match self {
+            System::MasterSystem => "master-system",
+            System::Genesis => "mega-drive",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.id() == id)
+    }
+
+    /// Ações do controle, na ordem exibida.
+    pub fn actions(self) -> &'static [Action] {
+        self.layout().0
+    }
+
+    /// Teclas padrão, na ordem de [`System::actions`].
+    fn default_keys(self) -> &'static [&'static str] {
+        self.layout().1
+    }
+
+    fn layout(self) -> (&'static [Action], &'static [&'static str]) {
+        use Action::*;
+        match self {
+            System::MasterSystem => (
+                &[Up, Down, Left, Right, Button1, Button2, Pause],
+                &[
+                    "ArrowUp",
+                    "ArrowDown",
+                    "ArrowLeft",
+                    "ArrowRight",
+                    "KeyZ",
+                    "KeyX",
+                    "Enter",
+                ],
+            ),
+            System::Genesis => (
+                &[Up, Down, Left, Right, A, B, C, X, Y, Z, Start, Mode],
+                &[
+                    "ArrowUp",
+                    "ArrowDown",
+                    "ArrowLeft",
+                    "ArrowRight",
+                    "KeyZ",
+                    "KeyX",
+                    "KeyC",
+                    "KeyA",
+                    "KeyS",
+                    "KeyD",
+                    "Enter",
+                    "ShiftRight",
+                ],
+            ),
+        }
+    }
+}
+
+/// Ação do controle (ou do console, no caso do Pause do Master System).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Action {
     Up,
@@ -20,10 +88,18 @@ pub enum Action {
     Button1,
     Button2,
     Pause,
+    A,
+    B,
+    C,
+    X,
+    Y,
+    Z,
+    Start,
+    Mode,
 }
 
 impl Action {
-    pub const ALL: [Action; 7] = [
+    pub const ALL: [Action; 15] = [
         Action::Up,
         Action::Down,
         Action::Left,
@@ -31,6 +107,14 @@ impl Action {
         Action::Button1,
         Action::Button2,
         Action::Pause,
+        Action::A,
+        Action::B,
+        Action::C,
+        Action::X,
+        Action::Y,
+        Action::Z,
+        Action::Start,
+        Action::Mode,
     ];
 
     /// Identificador estável, usado nas preferências e na interface.
@@ -43,15 +127,19 @@ impl Action {
             Action::Button1 => "button1",
             Action::Button2 => "button2",
             Action::Pause => "pause",
+            Action::A => "a",
+            Action::B => "b",
+            Action::C => "c",
+            Action::X => "x",
+            Action::Y => "y",
+            Action::Z => "z",
+            Action::Start => "start",
+            Action::Mode => "mode",
         }
     }
 
     pub fn from_id(id: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|a| a.id() == id)
-    }
-
-    fn index(self) -> usize {
-        self as usize
     }
 }
 
@@ -158,69 +246,79 @@ impl fmt::Display for BindingError {
 
 impl std::error::Error for BindingError {}
 
-/// Uma tecla por ação, sem repetições.
+/// Uma tecla por ação do console, sem repetições.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bindings {
-    keys: [(&'static str, KeyCode); Action::ALL.len()],
-}
-
-impl Default for Bindings {
-    /// Setas, Z, X e Enter.
-    fn default() -> Self {
-        Self {
-            keys: [
-                ("ArrowUp", KeyCode::ArrowUp),
-                ("ArrowDown", KeyCode::ArrowDown),
-                ("ArrowLeft", KeyCode::ArrowLeft),
-                ("ArrowRight", KeyCode::ArrowRight),
-                ("KeyZ", KeyCode::KeyZ),
-                ("KeyX", KeyCode::KeyX),
-                ("Enter", KeyCode::Enter),
-            ],
-        }
-    }
+    system: System,
+    /// Na ordem de [`System::actions`].
+    keys: Vec<(&'static str, KeyCode)>,
 }
 
 impl Bindings {
-    /// Monta a partir de pares `(ação, tecla)`; exige todas as ações, teclas
-    /// suportadas e nenhuma tecla repetida.
+    /// Teclas padrão do console (Master System: setas, Z, X e Enter).
+    pub fn defaults(system: System) -> Self {
+        let keys = system
+            .default_keys()
+            .iter()
+            .map(|name| supported(name).expect("teclas padrão são suportadas"))
+            .collect();
+        Self { system, keys }
+    }
+
+    /// Monta a partir de pares `(ação, tecla)`; exige todas as ações do
+    /// console, teclas suportadas e nenhuma tecla repetida.
     pub fn from_pairs<'a>(
+        system: System,
         pairs: impl IntoIterator<Item = (&'a str, &'a str)>,
     ) -> Result<Self, BindingError> {
-        let mut keys: [Option<(&'static str, KeyCode)>; Action::ALL.len()] = Default::default();
+        let actions = system.actions();
+        let mut keys: Vec<Option<(&'static str, KeyCode)>> = vec![None; actions.len()];
         for (action_id, key) in pairs {
-            let action = Action::from_id(action_id)
+            let index = Action::from_id(action_id)
+                .and_then(|action| actions.iter().position(|&a| a == action))
                 .ok_or_else(|| BindingError::UnknownAction(action_id.to_owned()))?;
             let key = supported(key).ok_or_else(|| BindingError::UnsupportedKey(key.to_owned()))?;
-            keys[action.index()] = Some(key);
+            keys[index] = Some(key);
         }
-        let mut resolved = Self::default().keys;
-        for action in Action::ALL {
-            resolved[action.index()] = keys[action.index()].ok_or(BindingError::Missing(action))?;
-        }
+        let resolved = keys
+            .into_iter()
+            .zip(actions)
+            .map(|(key, &action)| key.ok_or(BindingError::Missing(action)))
+            .collect::<Result<Vec<_>, _>>()?;
         for (i, (name, _)) in resolved.iter().enumerate() {
             if resolved[..i].iter().any(|(other, _)| other == name) {
                 return Err(BindingError::Duplicate((*name).to_owned()));
             }
         }
-        Ok(Self { keys: resolved })
+        Ok(Self {
+            system,
+            keys: resolved,
+        })
     }
 
-    /// Nome da tecla atribuída à ação.
-    pub fn key(&self, action: Action) -> &'static str {
-        self.keys[action.index()].0
+    pub fn system(&self) -> System {
+        self.system
+    }
+
+    /// Nome da tecla atribuída à ação (`None` se não é ação deste console).
+    pub fn key(&self, action: Action) -> Option<&'static str> {
+        let index = self.system.actions().iter().position(|&a| a == action)?;
+        Some(self.keys[index].0)
     }
 
     /// Ação acionada pela tecla, se houver.
     pub fn action_for(&self, code: KeyCode) -> Option<Action> {
-        Action::ALL
-            .into_iter()
-            .find(|a| self.keys[a.index()].1 == code)
+        let index = self.keys.iter().position(|&(_, c)| c == code)?;
+        Some(self.system.actions()[index])
     }
 
-    /// Pares `(ação, tecla)` na ordem de [`Action::ALL`].
+    /// Pares `(ação, tecla)` na ordem de [`System::actions`].
     pub fn pairs(&self) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
-        Action::ALL.into_iter().map(|a| (a.id(), self.key(a)))
+        self.system
+            .actions()
+            .iter()
+            .zip(&self.keys)
+            .map(|(action, (key, _))| (action.id(), *key))
     }
 
     /// Formato de linha de comando: `up=ArrowUp,down=ArrowDown,...`.
@@ -231,7 +329,7 @@ impl Bindings {
             .join(",")
     }
 
-    pub fn parse_arg(arg: &str) -> Result<Self, BindingError> {
+    pub fn parse_arg(system: System, arg: &str) -> Result<Self, BindingError> {
         let pairs = arg
             .split(',')
             .map(|part| {
@@ -239,7 +337,7 @@ impl Bindings {
                     .ok_or_else(|| BindingError::Malformed(part.to_owned()))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Self::from_pairs(pairs)
+        Self::from_pairs(system, pairs)
     }
 }
 
@@ -247,64 +345,92 @@ impl Bindings {
 mod tests {
     use super::*;
 
+    const SMS: System = System::MasterSystem;
+
     #[test]
     fn defaults_are_arrows_z_x_enter() {
-        let b = Bindings::default();
-        assert_eq!(b.key(Action::Up), "ArrowUp");
-        assert_eq!(b.key(Action::Button1), "KeyZ");
-        assert_eq!(b.key(Action::Pause), "Enter");
+        let b = Bindings::defaults(SMS);
+        assert_eq!(b.key(Action::Up), Some("ArrowUp"));
+        assert_eq!(b.key(Action::Button1), Some("KeyZ"));
+        assert_eq!(b.key(Action::Pause), Some("Enter"));
+        assert_eq!(b.key(Action::Start), None);
         assert_eq!(b.action_for(KeyCode::KeyX), Some(Action::Button2));
         assert_eq!(b.action_for(KeyCode::KeyQ), None);
     }
 
     #[test]
-    fn default_keys_are_supported() {
-        for (_, key) in Bindings::default().pairs() {
-            assert!(supported(key).is_some(), "{key}");
+    fn genesis_defaults_cover_six_buttons() {
+        let b = Bindings::defaults(System::Genesis);
+        assert_eq!(b.key(Action::A), Some("KeyZ"));
+        assert_eq!(b.key(Action::Z), Some("KeyD"));
+        assert_eq!(b.key(Action::Mode), Some("ShiftRight"));
+        assert_eq!(b.action_for(KeyCode::Enter), Some(Action::Start));
+        assert_eq!(b.key(Action::Button1), None);
+    }
+
+    #[test]
+    fn every_system_has_valid_unique_defaults() {
+        for system in System::ALL {
+            assert_eq!(system.actions().len(), system.default_keys().len());
+            let defaults = Bindings::defaults(system);
+            let pairs: Vec<_> = defaults.pairs().collect();
+            assert_eq!(Bindings::from_pairs(system, pairs), Ok(defaults));
+            assert_eq!(System::from_id(system.id()), Some(system));
         }
     }
 
     #[test]
     fn arg_round_trips() {
-        let custom = Bindings::from_pairs([
-            ("up", "KeyW"),
-            ("down", "KeyS"),
-            ("left", "KeyA"),
-            ("right", "KeyD"),
-            ("button1", "KeyJ"),
-            ("button2", "KeyK"),
-            ("pause", "Space"),
-        ])
+        let custom = Bindings::from_pairs(
+            SMS,
+            [
+                ("up", "KeyW"),
+                ("down", "KeyS"),
+                ("left", "KeyA"),
+                ("right", "KeyD"),
+                ("button1", "KeyJ"),
+                ("button2", "KeyK"),
+                ("pause", "Space"),
+            ],
+        )
         .expect("mapeamento válido");
-        assert_eq!(Bindings::parse_arg(&custom.to_arg()), Ok(custom.clone()));
+        assert_eq!(
+            Bindings::parse_arg(SMS, &custom.to_arg()),
+            Ok(custom.clone())
+        );
         assert_eq!(custom.action_for(KeyCode::KeyJ), Some(Action::Button1));
     }
 
     #[test]
     fn rejects_invalid_mappings() {
-        let mut pairs: Vec<(&str, &str)> = Bindings::default().pairs().collect();
+        let mut pairs: Vec<(&str, &str)> = Bindings::defaults(SMS).pairs().collect();
         pairs[1].1 = "ArrowUp";
         assert_eq!(
-            Bindings::from_pairs(pairs.clone()),
+            Bindings::from_pairs(SMS, pairs.clone()),
             Err(BindingError::Duplicate("ArrowUp".to_owned()))
         );
 
         pairs[1].1 = "Escape";
         assert_eq!(
-            Bindings::from_pairs(pairs.clone()),
+            Bindings::from_pairs(SMS, pairs.clone()),
             Err(BindingError::UnsupportedKey("Escape".to_owned()))
         );
 
         assert_eq!(
-            Bindings::from_pairs([("up", "KeyW")]),
+            Bindings::from_pairs(SMS, [("up", "KeyW")]),
             Err(BindingError::Missing(Action::Down))
         );
         assert_eq!(
-            Bindings::from_pairs([("jump", "KeyW")]),
+            Bindings::from_pairs(SMS, [("jump", "KeyW")]),
             Err(BindingError::UnknownAction("jump".to_owned()))
         );
+        // Ação de outro console.
+        assert_eq!(
+            Bindings::from_pairs(SMS, [("start", "KeyW")]),
+            Err(BindingError::UnknownAction("start".to_owned()))
+        );
         assert!(matches!(
-            Bindings::parse_arg("up"),
+            Bindings::parse_arg(SMS, "up"),
             Err(BindingError::Malformed(_))
         ));
     }

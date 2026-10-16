@@ -1,7 +1,7 @@
 //! Roda uma ROM de Mega Drive sem janela e grava o áudio em WAV (16 bits, estéreo).
 //!
 //! ```text
-//! cargo run -p genesis --release --example dump_audio -- jogo.bin 1800 saida.wav [botões]
+//! cargo run -p genesis --release --example md_audio -- jogo.bin 1800 saida.wav [botões]
 //! ```
 //!
 //! `botões`: como no `dump_frame` (`quadro:tecla`, teclas `u d l r a b c s`).
@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let rom_path = args
         .next()
-        .ok_or("uso: dump_audio <rom> <quadros> <saida.wav> [botões]")?;
+        .ok_or("uso: md_audio <rom> <quadros> <saida.wav> [botões]")?;
     let frames: u32 = args.next().ok_or("informe o número de quadros")?.parse()?;
     let out_path = args.next().ok_or("informe o arquivo de saída")?;
     let presses: Vec<(u32, char)> = args

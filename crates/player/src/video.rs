@@ -19,13 +19,20 @@ pub fn layout(window: (usize, usize), frame: (usize, usize)) -> Layout {
     }
 }
 
-/// Copia `src` (`frame.0 × frame.1`) ampliado para `dst` (`window.0` de
-/// largura), por vizinho mais próximo. O resto de `dst` fica preto.
-pub fn blit(src: &[u32], frame: (usize, usize), dst: &mut [u32], window: (usize, usize)) {
+/// Copia `src` (`frame.0 × frame.1`, linhas de `stride` pixels) ampliado
+/// para `dst` (`window.0` de largura), por vizinho mais próximo. O resto de
+/// `dst` fica preto.
+pub fn blit(
+    src: &[u32],
+    stride: usize,
+    frame: (usize, usize),
+    dst: &mut [u32],
+    window: (usize, usize),
+) {
     dst.fill(0);
     let Layout { scale, x, y } = layout(window, frame);
     let visible_w = (frame.0 * scale).min(window.0 - x);
-    for (row, src_row) in src.chunks_exact(frame.0).enumerate() {
+    for (row, src_row) in src.chunks(stride).take(frame.1).enumerate() {
         for rep in 0..scale {
             let dy = y + row * scale + rep;
             if dy >= window.1 {
@@ -76,7 +83,7 @@ mod tests {
     fn blit_scales_pixels_and_letterboxes() {
         let src = [1, 2, 3, 4]; // 2×2
         let mut dst = [9; 6 * 4];
-        blit(&src, (2, 2), &mut dst, (6, 4));
+        blit(&src, 2, (2, 2), &mut dst, (6, 4));
         #[rustfmt::skip]
         let expected = [
             0, 1, 1, 2, 2, 0,
@@ -91,7 +98,16 @@ mod tests {
     fn blit_crops_when_window_is_smaller() {
         let src = [1, 2, 3, 4];
         let mut dst = [9; 1];
-        blit(&src, (2, 2), &mut dst, (1, 1));
+        blit(&src, 2, (2, 2), &mut dst, (1, 1));
         assert_eq!(dst, [1]);
+    }
+
+    #[test]
+    fn blit_uses_only_the_valid_part_of_each_row() {
+        // Linhas de 3 pixels, só 2 válidos (como o H32 no buffer de H40).
+        let src = [1, 2, 7, 3, 4, 7];
+        let mut dst = [9; 4];
+        blit(&src, 3, (2, 2), &mut dst, (2, 2));
+        assert_eq!(dst, [1, 2, 3, 4]);
     }
 }

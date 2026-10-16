@@ -12,30 +12,38 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
-use player::controls::Bindings;
+use player::controls::{Bindings, System};
 
 use crate::library::Game;
 
 /// Argumento que faz o executável abrir o jogo em vez do launcher.
 pub const PLAY_FLAG: &str = "--play";
+/// Argumento com o console da ROM (`master-system`, `mega-drive`).
+pub const CONSOLE_FLAG: &str = "--console";
 /// Argumento com o mapa de teclas do jogo (ver `player::controls`).
 pub const KEYS_FLAG: &str = "--keys";
 /// Argumento com o arquivo de estado salvo (continuar de onde parou).
 pub const STATE_FLAG: &str = "--state";
 
-/// Consoles com núcleo próprio capaz de rodar jogos.
-const PLAYABLE_CONSOLES: &[&str] = &["master-system"];
+/// Núcleo que roda jogos deste console, se houver.
+pub fn system_for(console_id: &str) -> Option<System> {
+    System::from_id(console_id)
+}
 
 /// Indica se o app consegue rodar jogos deste console.
 pub fn is_playable(console_id: &str) -> bool {
-    PLAYABLE_CONSOLES.contains(&console_id)
+    system_for(console_id).is_some()
 }
 
 /// Motivo pelo qual um jogo não pôde ser iniciado.
 #[derive(Debug)]
 pub enum LaunchError {
-    NotPlayable { console_id: String },
+    NotPlayable {
+        console_id: String,
+    },
     RomMissing(PathBuf),
+    /// As teclas recebidas são de outro console (erro de quem chamou).
+    ControlsMismatch,
     AlreadyRunning,
     Spawn(io::Error),
 }
@@ -49,6 +57,7 @@ impl fmt::Display for LaunchError {
             Self::RomMissing(path) => {
                 write!(f, "O arquivo do jogo não existe mais: {}", path.display())
             }
+            Self::ControlsMismatch => f.write_str("Os controles não são deste console."),
             Self::AlreadyRunning => f.write_str("Já há um jogo em execução."),
             Self::Spawn(error) => write!(f, "Não foi possível iniciar o jogo: {error}"),
         }
@@ -64,10 +73,10 @@ impl std::error::Error for LaunchError {
     }
 }
 
-/// Monta o comando que roda a ROM indicada.
 /// Como o jogo deve rodar.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct LaunchOptions {
+    /// Teclas do jogo; também definem o console ([`Bindings::system`]).
     pub bindings: Bindings,
     /// Estado para continuar e onde gravar o progresso ao fechar.
     pub state_path: Option<PathBuf>,
@@ -82,7 +91,8 @@ pub struct Runner {
 }
 
 impl Default for Runner {
-    /// Roda `<executável atual> --play <rom> --keys <mapa> [--state <arquivo>]`.
+    /// Roda `<executável atual> --play <rom> --console <id> --keys <mapa>
+    /// [--state <arquivo>]`.
     fn default() -> Self {
         Self::with_command(|rom, options| Ok(play_command(&std::env::current_exe()?, rom, options)))
     }
@@ -94,6 +104,8 @@ fn play_command(exe: &Path, rom: &Path, options: &LaunchOptions) -> Command {
     command
         .arg(PLAY_FLAG)
         .arg(rom)
+        .arg(CONSOLE_FLAG)
+        .arg(options.bindings.system().id())
         .arg(KEYS_FLAG)
         .arg(options.bindings.to_arg());
     if let Some(state) = &options.state_path {
@@ -130,10 +142,13 @@ impl Runner {
         options: &LaunchOptions,
         on_exit: impl FnOnce(Option<i32>) + Send + 'static,
     ) -> Result<(), LaunchError> {
-        if !is_playable(&game.console_id) {
+        let Some(system) = system_for(&game.console_id) else {
             return Err(LaunchError::NotPlayable {
                 console_id: game.console_id.clone(),
             });
+        };
+        if options.bindings.system() != system {
+            return Err(LaunchError::ControlsMismatch);
         }
         if !game.path.is_file() {
             return Err(LaunchError::RomMissing(game.path.clone()));
@@ -196,6 +211,13 @@ mod tests {
 
     const TIMEOUT: Duration = Duration::from_secs(10);
 
+    fn options() -> LaunchOptions {
+        LaunchOptions {
+            bindings: Bindings::defaults(System::MasterSystem),
+            state_path: None,
+        }
+    }
+
     fn game(console_id: &str, path: PathBuf) -> Game {
         Game {
             id: "rom.sms".to_owned(),
@@ -246,20 +268,29 @@ mod tests {
                 .collect()
         };
 
-        let keys = Bindings::default().to_arg();
+        let keys = Bindings::defaults(System::MasterSystem).to_arg();
         assert_eq!(
-            args(&LaunchOptions::default()),
-            vec![PLAY_FLAG, "/Jogos/sonic.sms", KEYS_FLAG, keys.as_str()]
+            args(&options()),
+            vec![
+                PLAY_FLAG,
+                "/Jogos/sonic.sms",
+                CONSOLE_FLAG,
+                "master-system",
+                KEYS_FLAG,
+                keys.as_str()
+            ]
         );
         let with_state = LaunchOptions {
             state_path: Some(PathBuf::from("/dados/sonic.state")),
-            ..LaunchOptions::default()
+            ..options()
         };
         assert_eq!(
             args(&with_state),
             vec![
                 PLAY_FLAG,
                 "/Jogos/sonic.sms",
+                CONSOLE_FLAG,
+                "master-system",
                 KEYS_FLAG,
                 keys.as_str(),
                 STATE_FLAG,
@@ -269,9 +300,10 @@ mod tests {
     }
 
     #[test]
-    fn only_master_system_is_playable() {
-        assert!(is_playable("master-system"));
-        assert!(!is_playable("mega-drive"));
+    fn master_system_and_mega_drive_are_playable() {
+        assert_eq!(system_for("master-system"), Some(System::MasterSystem));
+        assert_eq!(system_for("mega-drive"), Some(System::Genesis));
+        assert!(!is_playable("snes"));
         assert!(!is_playable(""));
     }
 
@@ -283,7 +315,7 @@ mod tests {
         runner
             .launch(
                 &game("master-system", rom.path().to_owned()),
-                &LaunchOptions::default(),
+                &options(),
                 move |code| {
                     let _ = tx.send(code);
                 },
@@ -301,19 +333,19 @@ mod tests {
         let target = game("master-system", rom.path().to_owned());
         let (tx, rx) = mpsc::channel();
         runner
-            .launch(&target, &LaunchOptions::default(), move |code| {
+            .launch(&target, &options(), move |code| {
                 let _ = tx.send(code);
             })
             .expect("primeiro jogo inicia");
 
         assert!(runner.is_running());
-        let second = runner.launch(&target, &LaunchOptions::default(), |_| {});
+        let second = runner.launch(&target, &options(), |_| {});
         assert!(matches!(second, Err(LaunchError::AlreadyRunning)));
 
         assert_eq!(rx.recv_timeout(TIMEOUT), Ok(Some(0)));
         let (tx, rx) = mpsc::channel();
         runner
-            .launch(&target, &LaunchOptions::default(), move |code| {
+            .launch(&target, &options(), move |code| {
                 let _ = tx.send(code);
             })
             .expect("vaga liberada após o fim do primeiro");
@@ -324,15 +356,24 @@ mod tests {
     fn rejects_console_without_core() {
         let rom = rom_file();
         let runner = fake_process(0, 0);
-        let result = runner.launch(
-            &game("mega-drive", rom.path().to_owned()),
-            &LaunchOptions::default(),
-            |_| {},
-        );
+        let result = runner.launch(&game("snes", rom.path().to_owned()), &options(), |_| {});
         assert!(matches!(
             result,
-            Err(LaunchError::NotPlayable { console_id }) if console_id == "mega-drive"
+            Err(LaunchError::NotPlayable { console_id }) if console_id == "snes"
         ));
+        assert!(!runner.is_running());
+    }
+
+    #[test]
+    fn rejects_controls_of_another_console() {
+        let rom = rom_file();
+        let runner = fake_process(0, 0);
+        let result = runner.launch(
+            &game("mega-drive", rom.path().to_owned()),
+            &options(),
+            |_| {},
+        );
+        assert!(matches!(result, Err(LaunchError::ControlsMismatch)));
         assert!(!runner.is_running());
     }
 
@@ -341,11 +382,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("pasta temporária");
         let missing = dir.path().join("sumiu.sms");
         let runner = fake_process(0, 0);
-        let result = runner.launch(
-            &game("master-system", missing.clone()),
-            &LaunchOptions::default(),
-            |_| {},
-        );
+        let result = runner.launch(&game("master-system", missing.clone()), &options(), |_| {});
         assert!(matches!(result, Err(LaunchError::RomMissing(path)) if path == missing));
         assert!(!runner.is_running());
     }
@@ -357,7 +394,7 @@ mod tests {
             Ok(Command::new("/caminho/que/nao/existe/project-consoles"))
         });
         let target = game("master-system", rom.path().to_owned());
-        let result = runner.launch(&target, &LaunchOptions::default(), |_| {});
+        let result = runner.launch(&target, &options(), |_| {});
         assert!(matches!(result, Err(LaunchError::Spawn(_))));
         assert!(!runner.is_running());
     }
@@ -368,7 +405,7 @@ mod tests {
         let runner = Runner::with_command(|_, _| Err(io::Error::other("sem executável")));
         let result = runner.launch(
             &game("master-system", rom.path().to_owned()),
-            &LaunchOptions::default(),
+            &options(),
             |_| {},
         );
         assert!(matches!(result, Err(LaunchError::Spawn(_))));

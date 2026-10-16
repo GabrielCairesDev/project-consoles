@@ -15,7 +15,8 @@ pub struct AudioOut {
     _stream: cpal::Stream,
     ring: Arc<SampleRing>,
     pub sample_rate: u32,
-    dc: DcBlocker,
+    /// Um filtro por canal (L, R).
+    dc: [DcBlocker; 2],
     scratch: Vec<f32>,
 }
 
@@ -30,8 +31,9 @@ impl AudioOut {
         let format = supported.sample_format();
         let config: StreamConfig = supported.into();
         let sample_rate = config.sample_rate;
+        // Quadros estéreo inteiros: capacidade par, e cada envio também.
         let ring = Arc::new(SampleRing::new(
-            (sample_rate as f32 * BUFFER_SECONDS) as usize,
+            (sample_rate as f32 * BUFFER_SECONDS) as usize * 2,
         ));
 
         let stream = match format {
@@ -47,18 +49,23 @@ impl AudioOut {
             _stream: stream,
             ring,
             sample_rate,
-            dc: DcBlocker::default(),
+            dc: Default::default(),
             scratch: Vec::new(),
         })
     }
 
-    /// Envia amostras do PSG (0.0..1.0) já sem nível DC. O que não couber é
-    /// descartado: atraso acumulado no áudio é pior que um estalo.
+    /// Envia áudio estéreo intercalado (L, R), já sem nível DC. O que não
+    /// couber é descartado: atraso acumulado no áudio é pior que um estalo.
     pub fn push(&mut self, samples: &[f32]) {
         self.scratch.clear();
-        self.scratch
-            .extend(samples.iter().map(|&s| self.dc.filter(s)));
-        self.ring.push(&self.scratch);
+        for frame in samples.as_chunks::<2>().0 {
+            self.scratch.push(self.dc[0].filter(frame[0]));
+            self.scratch.push(self.dc[1].filter(frame[1]));
+        }
+        // Só quadros inteiros entram, para L e R não trocarem de lugar.
+        let fits = self.ring.free() & !1;
+        self.ring
+            .push(&self.scratch[..self.scratch.len().min(fits)]);
     }
 }
 
@@ -71,16 +78,27 @@ where
     T: SizedSample + FromSample<f32>,
 {
     let channels = usize::from(config.channels).max(1);
-    let mut last = 0.0f32;
+    let mut last = [0.0f32; 2];
     device
         .build_output_stream(
             config,
             move |data: &mut [T], _| {
                 for frame in data.chunks_mut(channels) {
                     // Sem amostra (atraso do jogo): repete a última, o que
-                    // soa melhor que um corte para zero.
-                    last = ring.pop().unwrap_or(last);
-                    frame.fill(T::from_sample(last));
+                    // soa melhor que um corte para zero. O produtor só envia
+                    // pares, então L e R chegam juntos.
+                    if let (Some(l), Some(r)) = (ring.pop(), ring.pop()) {
+                        last = [l, r];
+                    }
+                    match frame {
+                        [mono] => *mono = T::from_sample((last[0] + last[1]) * 0.5),
+                        [l, r, rest @ ..] => {
+                            *l = T::from_sample(last[0]);
+                            *r = T::from_sample(last[1]);
+                            rest.fill(T::from_sample(0.0));
+                        }
+                        [] => {}
+                    }
                 }
             },
             |err| eprintln!("erro no áudio: {err}"),

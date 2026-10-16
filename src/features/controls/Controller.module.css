@@ -10,11 +10,10 @@
   font-size: var(--text-sm);
 }
 
-/* Proporção do viewBox (440×220): os botões são posicionados em % por cima. */
+/* A proporção vem do viewBox de cada desenho; as teclas ficam por cima, em %. */
 .pad {
   position: relative;
   width: 100%;
-  aspect-ratio: 2;
 }
 
 .art {
@@ -120,6 +119,12 @@
 
 .consoleLabel {
   font-weight: var(--font-weight-semibold);
+}
+
+.extras {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
 .consoleNote {

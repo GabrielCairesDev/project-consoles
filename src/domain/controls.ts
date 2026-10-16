@@ -1,4 +1,4 @@
-/** Ações do Master System, na mesma ordem e com os mesmos ids do núcleo. */
+/** Ações de todos os consoles, com os mesmos ids do núcleo. */
 export const CONTROL_ACTIONS = [
   "up",
   "down",
@@ -7,14 +7,27 @@ export const CONTROL_ACTIONS = [
   "button1",
   "button2",
   "pause",
+  "a",
+  "b",
+  "c",
+  "x",
+  "y",
+  "z",
+  "start",
+  "mode",
 ] as const;
 
 export type ControlAction = (typeof CONTROL_ACTIONS)[number];
 
-/** Ação → tecla, com nomes de `KeyboardEvent.code` (ex.: "ArrowUp", "KeyZ"). */
-export type Bindings = Record<ControlAction, string>;
+/**
+ * Ação → tecla, com nomes de `KeyboardEvent.code` (ex.: "ArrowUp", "KeyZ").
+ * Só as ações do console aparecem.
+ */
+export type Bindings = Partial<Record<ControlAction, string>>;
 
 export interface ControlsInfo {
+  /** Ações do controle deste console, na ordem do núcleo. */
+  actions: ControlAction[];
   bindings: Bindings;
   defaults: Bindings;
   /** Teclas que o núcleo aceita; Esc fica reservado para fechar o jogo. */
@@ -29,6 +42,14 @@ export const ACTION_LABELS: Record<ControlAction, string> = {
   button1: "Botão 1",
   button2: "Botão 2",
   pause: "Pause",
+  a: "A",
+  b: "B",
+  c: "C",
+  x: "X",
+  y: "Y",
+  z: "Z",
+  start: "Start",
+  mode: "Mode",
 };
 
 const SPECIAL_KEYS: Record<string, { label: string; name: string }> = {
@@ -84,11 +105,16 @@ export interface Rebind {
  * Atribui `key` a `action`. Se outra ação já usava a tecla, as duas trocam,
  * para nunca haver tecla repetida.
  */
-export function rebind(bindings: Bindings, action: ControlAction, key: string): Rebind {
+export function rebind(
+  bindings: Bindings,
+  action: ControlAction,
+  key: string,
+): Rebind {
   const previous = bindings[action];
-  const holder = CONTROL_ACTIONS.find((a) => a !== action && bindings[a] === key) ?? null;
+  const holder =
+    CONTROL_ACTIONS.find((a) => a !== action && bindings[a] === key) ?? null;
   const next: Bindings = { ...bindings, [action]: key };
-  if (holder) next[holder] = previous;
+  if (holder && previous !== undefined) next[holder] = previous;
   return { bindings: next, swappedWith: holder };
 }
 

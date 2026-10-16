@@ -3,9 +3,20 @@ import { Button } from "../../components/Button";
 import { Dialog } from "../../components/Dialog";
 import type { Console } from "../../domain/console";
 import { sameBindings } from "../../domain/controls";
+import { GenesisController } from "./GenesisController";
+import type { ControllerProps } from "./KeyButton";
 import { SmsController } from "./SmsController";
 import { useControls } from "./useControls";
 import styles from "./ControlsDialog.module.css";
+
+/** Desenho do controle de cada console jogável. */
+const CONTROLLERS: Record<
+  string,
+  (props: ControllerProps) => React.JSX.Element
+> = {
+  "master-system": SmsController,
+  "mega-drive": GenesisController,
+};
 
 interface ControlsDialogProps {
   console: Console;
@@ -18,6 +29,7 @@ export function ControlsDialog({ console, onClose }: ControlsDialogProps) {
   const { load, capturing, saving, notice, error } = controls;
   const info = load.status === "ready" ? load.info : null;
   const isDefault = info ? sameBindings(info.bindings, info.defaults) : true;
+  const Controller = CONTROLLERS[console.id] ?? SmsController;
 
   return (
     <Dialog
@@ -35,7 +47,11 @@ export function ControlsDialog({ console, onClose }: ControlsDialogProps) {
       }
     >
       {load.status === "loading" && (
-        <div className={styles.skeleton} role="status" aria-label="Carregando controles" />
+        <div
+          className={styles.skeleton}
+          role="status"
+          aria-label="Carregando controles"
+        />
       )}
 
       {load.status === "error" && (
@@ -49,7 +65,7 @@ export function ControlsDialog({ console, onClose }: ControlsDialogProps) {
       )}
 
       {info && (
-        <SmsController
+        <Controller
           bindings={info.bindings}
           capturing={capturing}
           disabled={saving}

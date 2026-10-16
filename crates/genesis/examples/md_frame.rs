@@ -1,7 +1,7 @@
 //! Roda uma ROM de Mega Drive sem janela e grava um quadro em PPM.
 //!
 //! ```text
-//! cargo run -p genesis --release --example dump_frame -- jogo.bin 600 saida.ppm [botões]
+//! cargo run -p genesis --release --example md_frame -- jogo.bin 600 saida.ppm [botões]
 //! ```
 //!
 //! `botões`: sequência opcional `quadro:tecla` (ex.: `300:s,500:a`), teclas
@@ -15,7 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
     let rom_path = args
         .next()
-        .ok_or("uso: dump_frame <rom> <quadros> <saida.ppm> [botões]")?;
+        .ok_or("uso: md_frame <rom> <quadros> <saida.ppm> [botões]")?;
     let frames: u32 = args.next().ok_or("informe o número de quadros")?.parse()?;
     let out_path = args.next().ok_or("informe o arquivo de saída")?;
     let presses: Vec<(u32, char)> = args

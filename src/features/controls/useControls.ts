@@ -59,7 +59,8 @@ export function useControls(consoleId: string): ControlsState {
     setLoad({ status: "loading" });
     getControls(consoleId).then(
       (info) => current && setLoad({ status: "ready", info }),
-      (e: unknown) => current && setLoad({ status: "error", message: message(e) }),
+      (e: unknown) =>
+        current && setLoad({ status: "error", message: message(e) }),
     );
     return () => {
       current = false;
@@ -103,7 +104,7 @@ export function useControls(consoleId: string): ControlsState {
       const { bindings, swappedWith } = rebind(info.bindings, action, code);
       const assigned = `${ACTION_LABELS[action]} agora usa ${keyName(code)}.`;
       const swapped = swappedWith
-        ? ` ${ACTION_LABELS[swappedWith]} ficou com ${keyName(bindings[swappedWith])}.`
+        ? ` ${ACTION_LABELS[swappedWith]} ficou com ${keyName(bindings[swappedWith] ?? "")}.`
         : "";
       save(bindings, assigned + swapped);
     },
@@ -123,14 +124,17 @@ export function useControls(consoleId: string): ControlsState {
         return;
       }
       if (!info.supportedKeys.includes(event.code)) {
-        setNotice(`A tecla ${event.key || event.code} não pode ser usada. Escolha outra.`);
+        setNotice(
+          `A tecla ${event.key || event.code} não pode ser usada. Escolha outra.`,
+        );
         return;
       }
       setCapturing(null);
       assign(capturing, event.code);
     }
     window.addEventListener("keydown", onKeyDown, { capture: true });
-    return () => window.removeEventListener("keydown", onKeyDown, { capture: true });
+    return () =>
+      window.removeEventListener("keydown", onKeyDown, { capture: true });
   }, [capturing, info, assign]);
 
   return {
@@ -143,7 +147,9 @@ export function useControls(consoleId: string): ControlsState {
       if (saving) return;
       setError(null);
       setCapturing(action);
-      setNotice(`Pressione a tecla para ${ACTION_LABELS[action]}. Esc cancela.`);
+      setNotice(
+        `Pressione a tecla para ${ACTION_LABELS[action]}. Esc cancela.`,
+      );
     },
     cancelCapture: () => setCapturing(null),
     resetToDefaults: () => {

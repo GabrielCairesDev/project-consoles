@@ -5,7 +5,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use player::controls::{BindingError, Bindings};
+use player::controls::{BindingError, Bindings, System};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,19 +48,23 @@ impl Settings {
     }
 
     /// Teclas configuradas para o console, ou o padrão se não houver.
-    pub fn controls_for(&self, console_id: &str) -> Result<Bindings, BindingError> {
-        match self.controls.get(console_id) {
-            Some(keys) => Bindings::from_pairs(keys.iter().map(|(a, k)| (a.as_str(), k.as_str()))),
-            None => Ok(Bindings::default()),
+    pub fn controls_for(&self, system: System) -> Result<Bindings, BindingError> {
+        match self.controls.get(system.id()) {
+            Some(keys) => {
+                Bindings::from_pairs(system, keys.iter().map(|(a, k)| (a.as_str(), k.as_str())))
+            }
+            None => Ok(Bindings::defaults(system)),
         }
     }
 
-    pub fn set_controls(&mut self, console_id: &str, bindings: &Bindings) {
+    /// Grava as teclas no console de `bindings`.
+    pub fn set_controls(&mut self, bindings: &Bindings) {
         let keys = bindings
             .pairs()
             .map(|(action, key)| (action.to_owned(), key.to_owned()))
             .collect();
-        self.controls.insert(console_id.to_owned(), keys);
+        self.controls
+            .insert(bindings.system().id().to_owned(), keys);
     }
 
     pub fn console(&self, console_id: &str) -> ConsoleSettings {
@@ -105,22 +109,30 @@ mod tests {
             library_dir: Some(PathBuf::from("/Jogos")),
             ..Settings::default()
         };
-        let custom = Bindings::from_pairs([
-            ("up", "KeyW"),
-            ("down", "KeyS"),
-            ("left", "KeyA"),
-            ("right", "KeyD"),
-            ("button1", "KeyJ"),
-            ("button2", "KeyK"),
-            ("pause", "Space"),
-        ])
+        let custom = Bindings::from_pairs(
+            System::MasterSystem,
+            [
+                ("up", "KeyW"),
+                ("down", "KeyS"),
+                ("left", "KeyA"),
+                ("right", "KeyD"),
+                ("button1", "KeyJ"),
+                ("button2", "KeyK"),
+                ("pause", "Space"),
+            ],
+        )
         .expect("mapa válido");
-        settings.set_controls("master-system", &custom);
+        settings.set_controls(&custom);
         settings.set_console("master-system", ConsoleSettings { resume: false });
         settings.save(&path).expect("save");
         let loaded = Settings::load(&path).expect("load");
         assert_eq!(loaded, settings);
-        assert_eq!(loaded.controls_for("master-system"), Ok(custom));
+        assert_eq!(loaded.controls_for(System::MasterSystem), Ok(custom));
+        assert_eq!(
+            loaded.controls_for(System::Genesis),
+            Ok(Bindings::defaults(System::Genesis)),
+            "cada console tem as próprias teclas"
+        );
         assert!(!loaded.console("master-system").resume);
     }
 
@@ -128,14 +140,14 @@ mod tests {
     fn controls_default_when_absent_and_reject_corrupted() {
         let mut settings = Settings::default();
         assert_eq!(
-            settings.controls_for("master-system"),
-            Ok(Bindings::default())
+            settings.controls_for(System::MasterSystem),
+            Ok(Bindings::defaults(System::MasterSystem))
         );
         settings.controls.insert(
             "master-system".to_owned(),
             BTreeMap::from([("up".to_owned(), "Escape".to_owned())]),
         );
-        assert!(settings.controls_for("master-system").is_err());
+        assert!(settings.controls_for(System::MasterSystem).is_err());
     }
 
     #[test]

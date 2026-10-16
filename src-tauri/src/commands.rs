@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use player::controls::{Bindings, SUPPORTED_KEYS};
+use player::controls::{Bindings, SUPPORTED_KEYS, System};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
@@ -211,14 +211,14 @@ pub async fn launch_game(
         .get(&game_id)
         .cloned()
         .ok_or_else(|| "Jogo não encontrado; atualize a biblioteca.".to_owned())?;
+    let system = runtime::system_for(&game.console_id)
+        .ok_or_else(|| "Ainda não é possível jogar títulos deste console.".to_owned())?;
     let (bindings, console_settings) = {
         let settings = lock(&state.settings);
-        let bindings = settings
-            .controls_for(&game.console_id)
-            .unwrap_or_else(|error| {
-                eprintln!("controles salvos inválidos ({error}); usando o padrão");
-                Bindings::default()
-            });
+        let bindings = settings.controls_for(system).unwrap_or_else(|error| {
+            eprintln!("controles salvos inválidos ({error}); usando o padrão");
+            Bindings::defaults(system)
+        });
         (bindings, settings.console(&game.console_id))
     };
     let options = LaunchOptions {
@@ -255,6 +255,8 @@ pub async fn launch_game(
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ControlsInfo {
+    /// Ações do controle deste console, na ordem de exibição.
+    actions: Vec<&'static str>,
     /// Ação → tecla (nomes de `KeyboardEvent.code`).
     bindings: BTreeMap<&'static str, &'static str>,
     defaults: BTreeMap<&'static str, &'static str>,
@@ -264,20 +266,19 @@ pub struct ControlsInfo {
 
 impl ControlsInfo {
     fn new(bindings: &Bindings) -> Self {
+        let system = bindings.system();
         Self {
+            actions: system.actions().iter().map(|a| a.id()).collect(),
             bindings: bindings.pairs().collect(),
-            defaults: Bindings::default().pairs().collect(),
+            defaults: Bindings::defaults(system).pairs().collect(),
             supported_keys: SUPPORTED_KEYS.iter().map(|(name, _)| *name).collect(),
         }
     }
 }
 
-fn ensure_playable(console_id: &str) -> CommandResult<()> {
-    if runtime::is_playable(console_id) {
-        Ok(())
-    } else {
-        Err("Este console ainda não tem controles configuráveis.".to_owned())
-    }
+fn playable_system(console_id: &str) -> CommandResult<System> {
+    runtime::system_for(console_id)
+        .ok_or_else(|| "Este console ainda não tem controles configuráveis.".to_owned())
 }
 
 /// Teclas configuradas para o console (o padrão, se nunca foram alteradas
@@ -287,10 +288,10 @@ pub fn get_controls(
     console_id: String,
     state: State<'_, Arc<AppState>>,
 ) -> CommandResult<ControlsInfo> {
-    ensure_playable(&console_id)?;
+    let system = playable_system(&console_id)?;
     let bindings = lock(&state.settings)
-        .controls_for(&console_id)
-        .unwrap_or_default();
+        .controls_for(system)
+        .unwrap_or_else(|_| Bindings::defaults(system));
     Ok(ControlsInfo::new(&bindings))
 }
 
@@ -302,14 +303,17 @@ pub async fn set_controls(
     bindings: HashMap<String, String>,
     state: State<'_, Arc<AppState>>,
 ) -> CommandResult<ControlsInfo> {
-    ensure_playable(&console_id)?;
-    let bindings = Bindings::from_pairs(bindings.iter().map(|(a, k)| (a.as_str(), k.as_str())))
-        .map_err(|error| format!("Mapa de controles inválido: {error}"))?;
+    let system = playable_system(&console_id)?;
+    let bindings = Bindings::from_pairs(
+        system,
+        bindings.iter().map(|(a, k)| (a.as_str(), k.as_str())),
+    )
+    .map_err(|error| format!("Mapa de controles inválido: {error}"))?;
     let state = Arc::clone(&state);
     tauri::async_runtime::spawn_blocking(move || {
         let mut settings = lock(&state.settings);
         let mut updated = settings.clone();
-        updated.set_controls(&console_id, &bindings);
+        updated.set_controls(&bindings);
         updated
             .save(&state.settings_path)
             .map_err(|error| format!("Não foi possível salvar os controles: {error}"))?;
@@ -347,7 +351,7 @@ pub fn get_console_settings(
     console_id: String,
     state: State<'_, Arc<AppState>>,
 ) -> CommandResult<ConsoleSettings> {
-    ensure_playable(&console_id)?;
+    playable_system(&console_id)?;
     Ok(lock(&state.settings).console(&console_id))
 }
 
@@ -358,7 +362,7 @@ pub async fn set_console_settings(
     settings: ConsoleSettings,
     state: State<'_, Arc<AppState>>,
 ) -> CommandResult<ConsoleSettings> {
-    ensure_playable(&console_id)?;
+    playable_system(&console_id)?;
     let state = Arc::clone(&state);
     tauri::async_runtime::spawn_blocking(move || {
         let mut current = lock(&state.settings);

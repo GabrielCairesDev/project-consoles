@@ -2999,10 +2999,12 @@ name = "player"
 version = "0.1.0"
 dependencies = [
  "cpal",
+ "genesis",
  "sms",
  "softbuffer",
  "tempfile",
  "winit",
+ "zip",
 ]
 
 [[package]]
@@ -5903,6 +5905,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2d98561b612a84ae525331a7a094429ef8a5772514ed507ff6db5f54badc971"
 dependencies = [
  "crc32fast",
+ "flate2",
  "indexmap 2.14.2",
  "memchr",
  "nix",

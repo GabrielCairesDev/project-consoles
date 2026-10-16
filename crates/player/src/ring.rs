@@ -28,6 +28,14 @@ impl SampleRing {
         write.wrapping_sub(read)
     }
 
+    /// Espaço livre, em amostras. Só o produtor pode confiar no valor
+    /// (o consumidor só aumenta o espaço).
+    pub fn free(&self) -> usize {
+        let write = self.write.load(Ordering::Relaxed);
+        let read = self.read.load(Ordering::Acquire);
+        self.slots.len() - write.wrapping_sub(read)
+    }
+
     /// Enfileira o que couber; devolve quantas amostras entraram.
     /// Só pode ser chamado por um único produtor.
     pub fn push(&self, samples: &[f32]) -> usize {
