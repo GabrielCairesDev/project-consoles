@@ -13,6 +13,7 @@ Gerado com a skill UI UX Pro Max (`--design-system "gaming emulator launcher dar
 - **Tema:** apenas escuro por enquanto (`color-scheme: dark`). Tema claro só quando houver requisito.
 - **Fontes:** empacotadas localmente via `@fontsource`. O app funciona offline e a CSP bloqueia origens externas.
 - **Ícones:** Lucide (`lucide-react`), traço 1.75. Nunca emojis. Ícones decorativos ficam com `aria-hidden`.
+- **Logos de consoles:** SVG vetoriais em `src/assets/consoles/` (fontes, licenças e tratamento em `SOURCES.md`), exibidos em cores originais. Para o fundo escuro, partes pretas/cinza-escuras foram convertidas para branco nos próprios arquivos (versão em negativo). Na grade, cada quadro mostra só o logo centralizado, numa caixa menor que o quadro (`--logo-inset-*`) para equilibrar wordmarks largos e logos quadrados.
 - **Movimento:** durações curtas (120/200/320 ms), zeradas com `prefers-reduced-motion`.
 - **Foco:** contorno de 2px com `--color-focus-ring` em todo `:focus-visible`.
 - **Contraste:** texto principal `#E2E8F0` e secundário `#94A3B8` sobre `#0B0B14` passam de 4.5:1; texto sobre a primária usa branco.

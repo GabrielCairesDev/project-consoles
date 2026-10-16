@@ -1,5 +1,5 @@
-import { WelcomeScreen } from "./features/welcome/WelcomeScreen";
+import { ConsoleCatalogPage } from "./features/catalog/ConsoleCatalogPage";
 
 export default function App() {
-  return <WelcomeScreen />;
+  return <ConsoleCatalogPage />;
 }

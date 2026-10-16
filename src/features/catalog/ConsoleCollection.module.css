@@ -1,0 +1,29 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--tile-min-width), 1fr));
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Proporção fixa: reserva espaço e evita layout shift. */
+.tile {
+  position: relative;
+  aspect-ratio: 1;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+/*
+ * Caixa do logo menor que o quadro, com margem vertical maior: equilibra o
+ * peso visual entre wordmarks largos e logos quadrados (object-fit: contain).
+ */
+.tileLogo {
+  position: absolute;
+  inset: var(--logo-inset-block) var(--logo-inset-inline);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
