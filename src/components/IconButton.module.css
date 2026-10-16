@@ -1,0 +1,72 @@
+.wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-height);
+  height: var(--control-height);
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+.button:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-raised);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.icon {
+  width: var(--icon-md);
+  height: var(--icon-md);
+}
+
+/*
+ * Abaixo do botão, alinhado à esquerda (os botões ficam no canto esquerdo da
+ * barra). Aparece com um pequeno atraso, para não piscar ao cruzar o mouse.
+ */
+.tooltip {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  left: 0;
+  z-index: 2;
+  max-width: var(--tooltip-max-width);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-md);
+  color: var(--color-text);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    visibility var(--duration-fast);
+}
+
+.wrapper:hover .tooltip,
+.button:focus-visible + .tooltip {
+  opacity: 1;
+  visibility: visible;
+  transition-delay: var(--tooltip-delay);
+}

@@ -9,7 +9,7 @@ import {
   scanLibrary,
 } from "../../services/library";
 import { ConsoleGamesPage } from "./ConsoleGamesPage";
-import { LibraryProvider } from "./LibraryContext";
+import { LibraryProvider } from "./LibraryProvider";
 import { clearCoverCache } from "./useCover";
 
 vi.mock("../../services/library", () => ({
@@ -97,8 +97,11 @@ describe("ConsoleGamesPage", () => {
     coverMock.mockResolvedValue(null);
   });
 
-  it("console sem suporte mostra aviso", async () => {
+  it("console sem suporte mostra aviso e só o botão de voltar", async () => {
     renderPage({ ...GBA, id: "playstation", name: "PlayStation", supported: false });
+
+    expect(screen.queryByRole("button", { name: "Trocar pasta" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Atualizar" })).toBeNull();
 
     expect(
       screen.getByText("Reconhecimento de jogos ainda não disponível para este console."),
@@ -108,7 +111,7 @@ describe("ConsoleGamesPage", () => {
   it("botão voltar retorna ao catálogo", () => {
     const { onBack } = renderPage();
 
-    fireEvent.click(screen.getByRole("button", { name: "Consoles" }));
+    fireEvent.click(screen.getByRole("button", { name: "Voltar para consoles" }));
 
     expect(onBack).toHaveBeenCalledTimes(1);
   });
@@ -119,7 +122,10 @@ describe("ConsoleGamesPage", () => {
     const grade = await screen.findByRole("list", { name: "Jogos" });
     expect(within(grade).getAllByRole("listitem")).toHaveLength(3);
     expect(within(grade).queryByText("Super Mario World (USA)")).toBeNull();
-    expect(screen.getByText("/Jogos")).toBeInTheDocument();
+    // O caminho não aparece na tela: só no tooltip do botão de pasta.
+    expect(screen.getByRole("button", { name: "Trocar pasta" })).toHaveAccessibleDescription(
+      "/Jogos",
+    );
     expect(scanMock).toHaveBeenCalledTimes(1);
   });
 

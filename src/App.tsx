@@ -2,7 +2,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import type { Console } from "./domain/console";
 import { ConsoleCatalogPage } from "./features/catalog/ConsoleCatalogPage";
 import { ConsoleGamesPage } from "./features/library/ConsoleGamesPage";
-import { LibraryProvider } from "./features/library/LibraryContext";
+import { LibraryProvider } from "./features/library/LibraryProvider";
 
 export default function App() {
   const [selected, setSelected] = useState<Console | null>(null);

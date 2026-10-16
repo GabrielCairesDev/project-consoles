@@ -22,6 +22,11 @@
   background: var(--color-bg);
 }
 
+.toolbarActions {
+  display: flex;
+  gap: var(--space-2);
+}
+
 .consoleLogo {
   display: flex;
   align-items: center;
@@ -31,24 +36,6 @@
 
 .content {
   padding-top: var(--space-2);
-}
-
-.actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-bottom: var(--space-4);
-}
-
-/* Caminho da pasta: ocupa o espaço livre e corta com reticências. */
-.folder {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--color-text-muted);
-  font-size: var(--text-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .grid {
@@ -114,6 +101,7 @@
 }
 
 .inlineError {
+  margin-bottom: var(--space-4);
   color: var(--color-danger);
   font-size: var(--text-sm);
 }

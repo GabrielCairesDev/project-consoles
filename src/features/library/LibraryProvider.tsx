@@ -1,34 +1,7 @@
-import {
-  type ReactNode,
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
-import { type LibraryScan, countGamesByConsole } from "../../domain/game";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { chooseLibraryDir, getLibraryDir, scanLibrary } from "../../services/library";
 import { clearCoverCache } from "./useCover";
-
-export type LibraryState =
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "unset" }
-  | { status: "scanning"; folder: string }
-  | { status: "ready"; scan: LibraryScan };
-
-interface LibraryContextValue {
-  state: LibraryState;
-  /** Abre o seletor de pasta; ao confirmar, varre a nova pasta. */
-  choose: () => Promise<void>;
-  choosing: boolean;
-  chooseError: string | null;
-  /** Varre de novo a pasta atual. */
-  refresh: () => void;
-}
-
-const LibraryContext = createContext<LibraryContextValue | null>(null);
+import { LibraryContext, type LibraryState } from "./useLibrary";
 
 function messageOf(error: unknown, fallback: string): string {
   return typeof error === "string" ? error : fallback;
@@ -121,28 +94,4 @@ export function LibraryProvider({ children }: { children: ReactNode }) {
     [state, choose, choosing, chooseError, refresh],
   );
   return <LibraryContext.Provider value={value}>{children}</LibraryContext.Provider>;
-}
-
-export function useLibrary(): LibraryContextValue {
-  const value = useContext(LibraryContext);
-  if (!value) throw new Error("useLibrary precisa de <LibraryProvider>");
-  return value;
-}
-
-const NO_COUNTS: ReadonlyMap<string, number> = new Map();
-
-export interface GameCounts {
-  /** Jogos encontrados por console; vazio até a varredura terminar. */
-  counts: ReadonlyMap<string, number>;
-  /** A biblioteca ainda está sendo lida ou varrida. */
-  loading: boolean;
-}
-
-/** Contagem de jogos por console. Fora de um `<LibraryProvider>`, vazia. */
-export function useGameCounts(): GameCounts {
-  const state = useContext(LibraryContext)?.state;
-  const games = state?.status === "ready" ? state.scan.games : null;
-  const loading = state?.status === "loading" || state?.status === "scanning";
-  const counts = useMemo(() => (games ? countGamesByConsole(games) : NO_COUNTS), [games]);
-  return { counts, loading };
 }

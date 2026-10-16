@@ -97,9 +97,11 @@
 
   /* Estados */
   --loading-delay: 150ms;
+  --tooltip-delay: 300ms;
 
   /* Layout */
   --content-max-width: 40rem;
+  --tooltip-max-width: 32rem;
   --page-max-width: 80rem;
   --page-gutter: clamp(1rem, 4vw, 3rem);
   --tile-min-width: 10rem;

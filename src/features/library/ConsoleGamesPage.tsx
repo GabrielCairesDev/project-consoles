@@ -1,11 +1,12 @@
 import { useMemo } from "react";
 import { ArrowLeft, FolderOpen, RotateCw, TriangleAlert } from "lucide-react";
 import { Button } from "../../components/Button";
+import { IconButton } from "../../components/IconButton";
 import type { Console } from "../../domain/console";
 import type { LibraryScan } from "../../domain/game";
 import { ConsoleLogo } from "../catalog/ConsoleLogo";
 import { GameTile } from "./GameTile";
-import { useLibrary } from "./LibraryContext";
+import { useLibrary } from "./useLibrary";
 import styles from "./ConsoleGamesPage.module.css";
 
 const SKELETON_TILES = 10;
@@ -21,9 +22,10 @@ export function ConsoleGamesPage({ console, onBack }: ConsoleGamesPageProps) {
     <main className={styles.page}>
       <h1 className={styles.visuallyHidden}>{console.name}</h1>
       <div className={styles.toolbar}>
-        <Button variant="ghost" icon={ArrowLeft} onClick={onBack}>
-          Consoles
-        </Button>
+        <div className={styles.toolbarActions}>
+          <IconButton icon={ArrowLeft} label="Voltar para consoles" onClick={onBack} />
+          {console.supported && <LibraryActions />}
+        </div>
         <div className={styles.consoleLogo}>
           <ConsoleLogo console={console} />
         </div>
@@ -39,6 +41,28 @@ export function ConsoleGamesPage({ console, onBack }: ConsoleGamesPageProps) {
         )}
       </div>
     </main>
+  );
+}
+
+/** Trocar pasta (tooltip com o caminho atual) e atualizar a biblioteca. */
+function LibraryActions() {
+  const { state, choose, choosing, refresh } = useLibrary();
+  const folder =
+    state.status === "scanning" ? state.folder : state.status === "ready" ? state.scan.folder : null;
+  if (folder === null) return null;
+
+  const busy = state.status === "scanning";
+  return (
+    <>
+      <IconButton
+        icon={FolderOpen}
+        label="Trocar pasta"
+        tooltip={folder}
+        onClick={choose}
+        disabled={choosing || busy}
+      />
+      <IconButton icon={RotateCw} label="Atualizar" onClick={refresh} disabled={busy} />
+    </>
   );
 }
 
@@ -69,26 +93,14 @@ function Library({ console }: { console: Console }) {
     );
   }
 
-  const busy = state.status === "scanning";
   return (
     <>
-      <div className={styles.actions}>
-        <p className={styles.folder} title={busy ? state.folder : state.scan.folder}>
-          {busy ? state.folder : state.scan.folder}
-        </p>
-        <Button variant="ghost" icon={FolderOpen} onClick={choose} disabled={choosing || busy}>
-          Trocar pasta
-        </Button>
-        <Button variant="ghost" icon={RotateCw} onClick={refresh} disabled={busy}>
-          Atualizar
-        </Button>
-      </div>
       {chooseError && (
         <p className={styles.inlineError} role="alert">
           {chooseError}
         </p>
       )}
-      {busy ? <LoadingGrid /> : <Games console={console} scan={state.scan} />}
+      {state.status === "scanning" ? <LoadingGrid /> : <Games console={console} scan={state.scan} />}
     </>
   );
 }

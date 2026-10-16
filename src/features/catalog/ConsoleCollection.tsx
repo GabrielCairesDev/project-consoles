@@ -1,7 +1,7 @@
 import { LoaderCircle } from "lucide-react";
 import type { Console } from "../../domain/console";
 import { formatGameCount } from "../../domain/game";
-import { useGameCounts } from "../library/LibraryContext";
+import { useGameCounts } from "../library/useLibrary";
 import { ConsoleLogo } from "./ConsoleLogo";
 import styles from "./ConsoleCollection.module.css";
 

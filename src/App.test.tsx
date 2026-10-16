@@ -38,7 +38,7 @@ describe("App", () => {
     expect(screen.getByRole("heading", { level: 1, name: "PlayStation" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 1, name: "Consoles" })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Consoles" }));
+    fireEvent.click(screen.getByRole("button", { name: "Voltar para consoles" }));
     expect(screen.getByRole("heading", { level: 1, name: "Consoles" })).toBeInTheDocument();
     expect(fetchConsoles).toHaveBeenCalledTimes(1);
   });
