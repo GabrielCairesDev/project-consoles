@@ -7,9 +7,9 @@
 //! proprietário e não vem junto).
 //!
 //! Estado atual: CPU, GTE, memória, interrupções, timers, DMA, a GPU, o
-//! controle digital, o memory card na porta 1 e o CD-ROM (leitura de
-//! dados de imagens `.cue`/`.bin`). SPU e MDEC ainda são só
-//! registradores, e o som dos discos não toca.
+//! SPU, o controle digital, o memory card na porta 1 e o CD-ROM (leitura
+//! de dados de imagens `.cue`/`.bin`). O MDEC ainda é só registradores, e
+//! o som dos discos (CD-DA e XA-ADPCM) ainda não toca.
 
 mod bus;
 mod cdrom;
@@ -30,6 +30,9 @@ pub use sio::{Buttons, MEMORY_CARD_SIZE, MemoryCardError};
 
 /// Clock da CPU (Hz): 44100 × 768.
 pub const CPU_CLOCK: u32 = 33_868_800;
+
+/// Taxa do áudio gerado pelo SPU (Hz).
+pub const SAMPLE_RATE: u32 = 44_100;
 
 /// Ponto em que o BIOS entra no shell; um PS-EXE de teste é carregado aqui.
 const SHELL_ENTRY: u32 = 0x8003_0000;
@@ -200,6 +203,13 @@ impl Console {
     /// Põe o disco no drive. Com um disco, o BIOS dá a partida no jogo.
     pub fn insert_disc(&mut self, disc: Disc) {
         self.bus.cdrom.insert_disc(disc);
+    }
+
+    /// Move o áudio gerado para `out`: estéreo intercalado (L, R) a
+    /// [`SAMPLE_RATE`], valores em -1..1. Sem leitura, só o último meio
+    /// segundo é guardado.
+    pub fn drain_audio(&mut self, out: &mut Vec<f32>) {
+        self.bus.spu.drain(out);
     }
 
     /// Botões apertados no controle da porta 1.

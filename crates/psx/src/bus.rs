@@ -92,7 +92,7 @@ pub(crate) struct Bus {
     timers: Timers,
     pub(crate) gpu: Gpu,
     pub(crate) cdrom: Cdrom,
-    spu: Spu,
+    pub(crate) spu: Spu,
     pub(crate) sio: Sio,
 }
 
@@ -272,6 +272,7 @@ impl Bus {
             0x820..=0x823 => 0,
             0x824..=0x827 => 0x8004_0000 >> shift,
             0xC00..=0xFFF => {
+                self.sync_spu();
                 let low = u32::from(self.spu.read16(offset & !1 & 0x3FF));
                 if width == 4 {
                     low | u32::from(self.spu.read16((offset + 2) & 0x3FF)) << 16
@@ -330,10 +331,12 @@ impl Bus {
                 self.reschedule();
             }
             0xC00..=0xFFF => {
+                self.sync_spu();
                 self.spu.write16(offset & !1 & 0x3FF, value as u16);
                 if width == 4 {
                     self.spu.write16((offset + 2) & 0x3FF, (value >> 16) as u16);
                 }
+                self.raise_spu_irq();
             }
             _ => {}
         }
@@ -350,6 +353,9 @@ impl Bus {
     /// Executa a transferência do canal de uma vez. A CPU fica parada pelo
     /// tempo equivalente (uma palavra por ciclo).
     fn run_dma(&mut self, ch: usize) {
+        if ch == dma::SPU {
+            self.sync_spu();
+        }
         let channel = self.dma.channels[ch];
         let mut addr = channel.madr & 0x1F_FFFC;
         let mut cycles = 0;
@@ -413,6 +419,7 @@ impl Bus {
         if self.gpu.take_irq() {
             self.irq.request(Irq::Gpu);
         }
+        self.raise_spu_irq();
         if self.dma.finish(ch) {
             self.irq.request(Irq::Dma);
         }
@@ -458,6 +465,18 @@ impl Bus {
         Self::raise_timer_irqs(&mut self.irq, irqs);
         self.sync_sio();
         self.sync_cdrom();
+        self.sync_spu();
+    }
+
+    fn sync_spu(&mut self) {
+        self.spu.sync(self.now);
+        self.raise_spu_irq();
+    }
+
+    fn raise_spu_irq(&mut self) {
+        if self.spu.take_irq() {
+            self.irq.request(Irq::Spu);
+        }
     }
 
     fn sync_cdrom(&mut self) {

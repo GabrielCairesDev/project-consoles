@@ -79,7 +79,9 @@ impl Dma {
     fn ready(&self, ch: usize) -> bool {
         let c = &self.channels[ch];
         let enabled = self.dpcr & (8 << (ch * 4)) != 0;
-        let trigger = c.sync_mode() != 0 || c.chcr & CHCR_TRIGGER != 0;
+        // No modo 0 o trigger dá a partida, a não ser que o dispositivo
+        // peça a transferência sozinho (o SPU em modo DMA).
+        let trigger = c.sync_mode() != 0 || c.chcr & CHCR_TRIGGER != 0 || ch == SPU;
         enabled && c.chcr & CHCR_START != 0 && trigger
     }
 
@@ -152,6 +154,13 @@ mod tests {
         );
         dma.write(0x70, 0x0800_0000);
         assert_eq!(dma.write(0x68, CHCR_START | CHCR_TRIGGER).0, Some(OTC));
+    }
+
+    #[test]
+    fn spu_starts_in_mode_0_without_trigger() {
+        let mut dma = Dma::default();
+        dma.write(0x70, 0x0008_0000);
+        assert_eq!(dma.write(0x48, CHCR_START | 1).0, Some(SPU));
     }
 
     #[test]

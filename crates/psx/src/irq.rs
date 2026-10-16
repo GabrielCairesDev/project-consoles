@@ -1,7 +1,7 @@
 //! Controlador de interrupções (I_STAT e I_MASK, em 0x1F801070).
 
-/// Fontes de interrupção (bits de I_STAT). As da SIO (8) e do SPU (9)
-/// entram com esses dispositivos.
+/// Fontes de interrupção (bits de I_STAT). A da SIO (8) entra com esse
+/// dispositivo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Irq {
     Vblank = 0,
@@ -13,6 +13,7 @@ pub(crate) enum Irq {
     Timer2 = 6,
     /// /ACK do controle ou do memory card (SIO0).
     Controller = 7,
+    Spu = 9,
 }
 
 #[derive(Clone, Default)]
