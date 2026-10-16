@@ -100,10 +100,19 @@ Depois: revise o diff completo; procure bugs, race conditions, problemas de owne
 
 Se faltar contexto essencial, faça uma pergunta objetiva. Decisões de baixo risco: adote a alternativa mais simples e documente a premissa.
 
-## 12. Proibições
+## 12. Saves dos jogos (obrigatório em todo console)
+- Todo jogo que salva no hardware original deve salvar de verdade aqui: RAM com bateria (SRAM), EEPROM, flash, cartão de memória ou o que o console usar, incluindo o relógio do cartucho quando houver. Ao adicionar um console, o save faz parte do critério de conclusão; não é opcional nem "para depois".
+- O save do jogo é separado do estado salvo ("continuar de onde parou"): funciona com essa opção ligada ou desligada, e "Recomeçar do início" nunca o apaga.
+- Cada console tem a própria pasta de saves (`<dados do app>/saves/<console>/`), com um arquivo por jogo.
+- O formato do arquivo deve ser o bruto do hardware (ex.: `.sav` com o conteúdo exato da RAM do cartucho), compatível com outros emuladores, para o save poder ser levado e usado em outro lugar.
+- O usuário pode exportar o save de um jogo para um arquivo escolhido por ele, e importar um save de fora, com validação de tamanho e formato. Um save inválido é recusado com mensagem clara e nunca sobrescreve o existente.
+- Gravação atômica (arquivo temporário + rename), sem perder o save se o processo morrer. Um save existente que não pôde ser lido ou não confere é preservado, nunca sobrescrito.
+- Testes obrigatórios: ida e volta do save, save mantido ao recomeçar, recusa de tamanho/formato errado sem perda do arquivo, e exportar/importar.
+
+## 13. Proibições
 Nunca: inventar resultados de compilação/testes/benchmarks; contornar erros do compilador sem investigar a causa; usar `unsafe` sem justificativa; introduzir dependências desnecessárias; otimizar com base só em suposições; desativar verificações de segurança/qualidade para aprovar uma alteração; modificar funcionalidades não relacionadas; tratar código compilável como correto; entregar sem avaliar casos de falha; declarar concluída uma tarefa com falhas relevantes não informadas.
 
-## 13. Critério de conclusão
+## 14. Critério de conclusão
 Concluída somente quando: atende aos requisitos; segue as convenções do Rust; riscos de segurança avaliados; testes pertinentes implementados e executados (quando possível); formatação, lint e compilação verificados; compatibilidade multiplataforma considerada; performance avaliada conforme a criticidade; limitações e pendências explícitas.
 
 **Princípio central:** produzir software Rust correto, seguro, eficiente, multiplataforma e sustentável. Toda decisão técnica deve ser justificada pelo requisito real, pela documentação oficial ou por evidência verificável.
