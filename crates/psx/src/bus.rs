@@ -16,6 +16,7 @@ use crate::cdrom::Cdrom;
 use crate::dma::{self, Dma};
 use crate::gpu::{Gpu, VideoEvent};
 use crate::irq::{Interrupts, Irq};
+use crate::mdec::Mdec;
 use crate::sio::Sio;
 use crate::spu::Spu;
 use crate::timers::{TimerIrqs, Timers};
@@ -94,6 +95,10 @@ pub(crate) struct Bus {
     pub(crate) cdrom: Cdrom,
     pub(crate) spu: Spu,
     pub(crate) sio: Sio,
+    mdec: Mdec,
+    /// DMA 1 iniciado antes de o MDEC ter todas as palavras pedidas: roda
+    /// quando elas ficam prontas.
+    mdec_out_waiting: bool,
 }
 
 impl Bus {
@@ -114,6 +119,8 @@ impl Bus {
             cdrom: Cdrom::default(),
             spu: Spu::default(),
             sio: Sio::default(),
+            mdec: Mdec::default(),
+            mdec_out_waiting: false,
         };
         bus.reschedule();
         bus
@@ -268,9 +275,8 @@ impl Bus {
                 self.sync_devices();
                 self.gpu.status() >> shift
             }
-            // MDEC: parado e com as filas vazias.
-            0x820..=0x823 => 0,
-            0x824..=0x827 => 0x8004_0000 >> shift,
+            0x820..=0x823 => self.mdec.read_data() >> shift,
+            0x824..=0x827 => self.mdec.status() >> shift,
             0xC00..=0xFFF => {
                 self.sync_spu();
                 let low = u32::from(self.spu.read16(offset & !1 & 0x3FF));
@@ -302,7 +308,7 @@ impl Bus {
                     self.irq.request(Irq::Dma);
                 }
                 if let Some(channel) = start {
-                    self.run_dma(channel);
+                    self.start_dma(channel);
                 }
             }
             0x100..=0x12F => {
@@ -318,6 +324,14 @@ impl Bus {
                 }
                 self.raise_cdrom_irq();
                 self.reschedule();
+            }
+            0x820..=0x823 => {
+                self.mdec.write(value);
+                self.resume_mdec_out();
+            }
+            0x824..=0x827 => {
+                self.mdec.control(value);
+                self.resume_mdec_out();
             }
             0x810..=0x813 => {
                 self.gpu.gp0(value);
@@ -348,6 +362,27 @@ impl Bus {
 
     fn set_ram_word(&mut self, addr: u32, value: u32) {
         store::<4>(&mut self.ram[..], (addr as usize) & (RAM_SIZE - 4), value);
+    }
+
+    fn start_dma(&mut self, ch: usize) {
+        if ch == dma::MDEC_OUT {
+            self.mdec_out_waiting = true;
+            self.resume_mdec_out();
+        } else {
+            self.run_dma(ch);
+        }
+    }
+
+    /// Roda o DMA 1 em espera se o MDEC já tem as palavras dele.
+    fn resume_mdec_out(&mut self) {
+        let channel = self.dma.channels[dma::MDEC_OUT];
+        if !channel.active() {
+            self.mdec_out_waiting = false;
+        }
+        if self.mdec_out_waiting && self.mdec.output_len() >= channel.word_count() as usize {
+            self.mdec_out_waiting = false;
+            self.run_dma(dma::MDEC_OUT);
+        }
     }
 
     /// Executa a transferência do canal de uma vez. A CPU fica parada pelo
@@ -394,12 +429,14 @@ impl Bus {
                 } else if channel.reads_ram() {
                     let word = self.ram_word(addr);
                     match ch {
+                        dma::MDEC_IN => self.mdec.write(word),
                         dma::GPU => self.gpu.gp0(word),
                         dma::SPU => self.spu.dma_write(word),
                         _ => {}
                     }
                 } else {
                     let word = match ch {
+                        dma::MDEC_OUT => self.mdec.dma_read(),
                         dma::GPU => self.gpu.read(),
                         dma::CDROM => self.cdrom.dma_read(),
                         dma::SPU => self.spu.dma_read(),
@@ -422,6 +459,9 @@ impl Bus {
         self.raise_spu_irq();
         if self.dma.finish(ch) {
             self.irq.request(Irq::Dma);
+        }
+        if ch == dma::MDEC_IN {
+            self.resume_mdec_out();
         }
     }
 
@@ -555,6 +595,26 @@ mod tests {
                 .iter()
                 .all(|s| (s[1] + expected).abs() < 2.0 / 32768.0)
         );
+    }
+
+    #[test]
+    fn mdec_output_dma_waits_for_decoded_data() {
+        let mut bus = bus();
+        bus.write32(0x1F80_10F0, 0x0765_4321 | 0x88);
+        bus.write32(0x1F80_1824, 0x6000_0000);
+        // DMA 1 (MDEC → RAM) em blocos, antes de haver o que ler.
+        bus.write32(0x1F80_1090, 0x1000);
+        bus.write32(0x1F80_1094, 1 << 16 | 16);
+        bus.write32(0x1F80_1098, 0x0100_0200);
+        assert_eq!(bus.read32(0x1000), 0);
+        assert_ne!(bus.read32(0x1F80_1098) & 0x0100_0000, 0, "esperando");
+        // Um bloco monocromático de 8 bits só com DC zero: cinza 0x80.
+        bus.write32(0x1F80_1820, 1 << 29 | 1 << 27 | 1);
+        bus.write32(0x1F80_1820, 0xFE00_0400);
+        assert_eq!(bus.read32(0x1F80_1098) & 0x0100_0000, 0, "terminou");
+        for i in 0..16 {
+            assert_eq!(bus.read32(0x1000 + 4 * i), 0x8080_8080);
+        }
     }
 
     #[test]

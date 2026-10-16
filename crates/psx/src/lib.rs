@@ -7,9 +7,9 @@
 //! proprietário e não vem junto).
 //!
 //! Estado atual: CPU, GTE, memória, interrupções, timers, DMA, a GPU, o
-//! SPU, o controle digital, o memory card na porta 1 e o CD-ROM (imagens
-//! `.cue`/`.bin`, com o som CD-DA e XA-ADPCM mixado no SPU). O MDEC ainda
-//! é só registradores.
+//! SPU, o controle digital, o memory card na porta 1, o CD-ROM (imagens
+//! `.cue`/`.bin`, com o som CD-DA e XA-ADPCM mixado no SPU) e o MDEC (os
+//! vídeos).
 
 mod bus;
 mod cdrom;
@@ -19,6 +19,7 @@ mod dma;
 mod gpu;
 mod gte;
 mod irq;
+mod mdec;
 mod sio;
 mod spu;
 mod timers;

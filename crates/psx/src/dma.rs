@@ -4,6 +4,8 @@
 //! tem acesso à RAM e aos dispositivos.
 
 /// Canais na ordem do hardware.
+pub(crate) const MDEC_IN: usize = 0;
+pub(crate) const MDEC_OUT: usize = 1;
 pub(crate) const GPU: usize = 2;
 pub(crate) const CDROM: usize = 3;
 pub(crate) const SPU: usize = 4;
@@ -23,6 +25,11 @@ impl Channel {
     /// 0 = de uma vez, 1 = em blocos, 2 = lista ligada.
     pub(crate) fn sync_mode(&self) -> u32 {
         (self.chcr >> 9) & 3
+    }
+
+    /// Transferência em andamento (bit de início ligado).
+    pub(crate) fn active(&self) -> bool {
+        self.chcr & CHCR_START != 0
     }
 
     pub(crate) fn reads_ram(&self) -> bool {

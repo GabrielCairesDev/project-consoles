@@ -189,6 +189,45 @@ fn gpu_programs_match_hardware_vram() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// Vídeo do MDEC: a foto do `mdec/frame` (320×240, 15 bits, DMA). A
+/// fórmula exata da IDCT do hardware não é conhecida, então cada canal pode
+/// diferir em 1 (de 31); hoje 17 848 pixels diferem assim.
+#[test]
+#[ignore = "precisa do BIOS e dos programas de teste (PSX_TESTS_DIR)"]
+fn mdec_frame_matches_hardware_vram() {
+    let Some(dir) = tests_dir() else {
+        panic!("defina PSX_TESTS_DIR");
+    };
+    let folder = dir.join("ps1-tests/mdec/frame");
+    let path = folder.join("frame-15bit-dma.exe");
+    let exe = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let mut console = console(&dir);
+    console.load_exe(&exe).expect("PS-EXE válido");
+    for _ in 0..FRAMES / 2 {
+        console.run_frame();
+    }
+    let expected = reference_vram(&folder.join("vram-15bit.png"));
+    let mut different = 0;
+    for y in 0..240 {
+        for x in 0..320 {
+            let i = y * FULL.0 + x;
+            let (ours, theirs) = (console.vram()[i], expected[i]);
+            let channel = |p: u16, c: u16| i32::from((p >> (5 * c)) & 31);
+            let worst = (0..3)
+                .map(|c| (channel(ours, c) - channel(theirs, c)).abs())
+                .max()
+                .unwrap_or(0);
+            assert!(
+                worst <= 1,
+                "pixel ({x}, {y}): {ours:#06x}, hardware {theirs:#06x}"
+            );
+            different += usize::from(worst > 0);
+        }
+    }
+    println!("mdec/frame: {different} pixels a 1 nível do hardware");
+    assert!(different <= 18_000, "{different} pixels diferentes");
+}
+
 #[test]
 #[ignore = "precisa do BIOS e dos programas de teste (PSX_TESTS_DIR)"]
 fn gte_test_all_passes() {
