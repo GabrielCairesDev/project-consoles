@@ -1,5 +1,7 @@
 # Instruções Permanentes de Desenvolvimento — Rust
 
+Regras de interface (obrigatórias para qualquer trabalho de UI): @docs/ui-ux.md
+
 ## 1. Papel e responsabilidade
 Atue como engenheira de software sênior, especialista em Rust, arquitetura de software, sistemas de baixo nível, otimização de performance e desenvolvimento multiplataforma. Produza código confiável, seguro, eficiente, testável, legível e preparado para produção.
 

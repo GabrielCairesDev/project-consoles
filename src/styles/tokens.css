@@ -1,0 +1,93 @@
+/*
+ * Design tokens — fonte única da identidade visual (ver docs/design-system.md).
+ * Componentes usam apenas estas variáveis; nunca valores literais de cor,
+ * espaçamento, raio ou duração.
+ */
+:root {
+  color-scheme: dark;
+
+  /* Cores: superfícies */
+  --color-bg: #0b0b14;
+  --color-surface: #14142a;
+  --color-surface-raised: #1e1c35;
+  --color-border: #2a2945;
+  --color-border-strong: #4c1d95;
+
+  /* Cores: texto */
+  --color-text: #e2e8f0;
+  --color-text-muted: #94a3b8;
+
+  /* Cores: marca e ações */
+  --color-primary: #7c3aed;
+  --color-primary-hover: #8b5cf6;
+  --color-on-primary: #ffffff;
+  --color-secondary: #a78bfa;
+  --color-accent: #f43f5e;
+  --color-on-accent: #000000;
+  --color-focus-ring: #a78bfa;
+
+  /* Cores: semânticas */
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-info: #38bdf8;
+
+  /* Tipografia */
+  --font-display: "Russo One", system-ui, sans-serif;
+  --font-body: "Chakra Petch", system-ui, sans-serif;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 2rem;
+  --text-3xl: clamp(2rem, 1.25rem + 2.5vw, 3rem);
+  --leading-tight: 1.15;
+  --leading-normal: 1.5;
+  --tracking-wide: 0.12em;
+
+  /* Espaçamento (base 4px) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  /* Raios */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-full: 999px;
+
+  /* Elevação */
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 8px 24px rgb(0 0 0 / 0.45);
+
+  /* Ícones */
+  --icon-sm: 16px;
+  --icon-md: 20px;
+  --icon-lg: 32px;
+
+  /* Movimento */
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+  --duration-slow: 320ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Layout */
+  --content-max-width: 40rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: 0ms;
+    --duration-normal: 0ms;
+    --duration-slow: 0ms;
+  }
+}
