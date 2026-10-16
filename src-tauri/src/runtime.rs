@@ -24,6 +24,8 @@ pub const CONSOLE_FLAG: &str = "--console";
 pub const KEYS_FLAG: &str = "--keys";
 /// Argumento com o arquivo de estado salvo (continuar de onde parou).
 pub const STATE_FLAG: &str = "--state";
+/// Argumento com o arquivo do save do próprio jogo (RAM com bateria).
+pub const BATTERY_FLAG: &str = "--sav";
 
 /// Núcleo que roda jogos deste console, se houver.
 pub fn system_for(console_id: &str) -> Option<System> {
@@ -80,6 +82,8 @@ pub struct LaunchOptions {
     pub bindings: Bindings,
     /// Estado para continuar e onde gravar o progresso ao fechar.
     pub state_path: Option<PathBuf>,
+    /// Save do próprio jogo: carregado ao abrir e gravado ao fechar.
+    pub battery_path: Option<PathBuf>,
 }
 
 type CommandBuilder = Box<dyn Fn(&Path, &LaunchOptions) -> io::Result<Command> + Send + Sync>;
@@ -110,6 +114,9 @@ fn play_command(exe: &Path, rom: &Path, options: &LaunchOptions) -> Command {
         .arg(options.bindings.to_arg());
     if let Some(state) = &options.state_path {
         command.arg(STATE_FLAG).arg(state);
+    }
+    if let Some(battery) = &options.battery_path {
+        command.arg(BATTERY_FLAG).arg(battery);
     }
     command
 }
@@ -215,6 +222,7 @@ mod tests {
         LaunchOptions {
             bindings: Bindings::defaults(System::MasterSystem),
             state_path: None,
+            battery_path: None,
         }
     }
 
@@ -282,6 +290,7 @@ mod tests {
         );
         let with_state = LaunchOptions {
             state_path: Some(PathBuf::from("/dados/sonic.state")),
+            battery_path: Some(PathBuf::from("/dados/sonic.sav")),
             ..options()
         };
         assert_eq!(
@@ -294,15 +303,19 @@ mod tests {
                 KEYS_FLAG,
                 keys.as_str(),
                 STATE_FLAG,
-                "/dados/sonic.state"
+                "/dados/sonic.state",
+                BATTERY_FLAG,
+                "/dados/sonic.sav"
             ]
         );
     }
 
     #[test]
-    fn master_system_and_mega_drive_are_playable() {
+    fn consoles_with_core_are_playable() {
         assert_eq!(system_for("master-system"), Some(System::MasterSystem));
         assert_eq!(system_for("mega-drive"), Some(System::Genesis));
+        assert_eq!(system_for("game-boy"), Some(System::GameBoy));
+        assert!(!is_playable("game-boy-color"));
         assert!(!is_playable("snes"));
         assert!(!is_playable(""));
     }

@@ -216,6 +216,17 @@ impl Console {
         self.bus.vdp.registers()
     }
 
+    /// RAM do cartucho com bateria (o save do próprio jogo), se houver.
+    pub fn battery_ram(&self) -> Option<&[u8]> {
+        self.bus.sram()
+    }
+
+    /// Carrega o save do jogo; tamanho errado ou cartucho sem SRAM é
+    /// recusado (`false`) e nada muda.
+    pub fn load_battery_ram(&mut self, bytes: &[u8]) -> bool {
+        self.bus.load_sram(bytes)
+    }
+
     /// O 68000 parou por falha dupla (erro durante uma exceção).
     pub fn cpu_halted(&self) -> bool {
         self.cpu.halted()

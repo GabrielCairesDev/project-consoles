@@ -3007,6 +3007,7 @@ name = "player"
 version = "0.1.0"
 dependencies = [
  "cpal",
+ "gameboy",
  "genesis",
  "sms",
  "softbuffer",

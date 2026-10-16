@@ -24,12 +24,17 @@ pub enum Machine {
         console: Box<genesis::Console>,
         pad: genesis::Pad,
     },
+    GameBoy {
+        console: Box<gameboy::Console>,
+        buttons: gameboy::Buttons,
+    },
 }
 
 #[derive(Debug)]
 pub enum MachineError {
     MasterSystem(sms::RomError),
     Genesis(genesis::RomError),
+    GameBoy(gameboy::RomError),
 }
 
 impl std::fmt::Display for MachineError {
@@ -37,6 +42,7 @@ impl std::fmt::Display for MachineError {
         match self {
             Self::MasterSystem(e) => e.fmt(f),
             Self::Genesis(e) => e.fmt(f),
+            Self::GameBoy(e) => e.fmt(f),
         }
     }
 }
@@ -56,6 +62,12 @@ impl Machine {
                 ),
                 pad: genesis::Pad::default(),
             },
+            System::GameBoy => Self::GameBoy {
+                console: Box::new(
+                    gameboy::Console::new(rom, sample_rate).map_err(MachineError::GameBoy)?,
+                ),
+                buttons: gameboy::Buttons::default(),
+            },
         })
     }
 
@@ -63,6 +75,7 @@ impl Machine {
         match self {
             Self::MasterSystem { .. } => sms::FRAME_RATE,
             Self::Genesis { .. } => genesis::FRAME_RATE,
+            Self::GameBoy { .. } => gameboy::FRAME_RATE,
         }
     }
 
@@ -75,6 +88,10 @@ impl Machine {
             }
             Self::Genesis { console, pad } => {
                 console.set_input(*pad);
+                console.run_frame();
+            }
+            Self::GameBoy { console, buttons } => {
+                console.set_input(*buttons);
                 console.run_frame();
             }
         }
@@ -92,6 +109,11 @@ impl Machine {
                 stride: genesis::SCREEN_MAX_WIDTH,
                 size: console.frame_size(),
             },
+            Self::GameBoy { console, .. } => Frame {
+                pixels: console.framebuffer(),
+                stride: gameboy::SCREEN_WIDTH,
+                size: (gameboy::SCREEN_WIDTH, gameboy::SCREEN_HEIGHT),
+            },
         }
     }
 
@@ -104,6 +126,7 @@ impl Machine {
                 out.extend(mono_scratch.iter().flat_map(|&s| [s, s]));
             }
             Self::Genesis { console, .. } => console.drain_audio(out),
+            Self::GameBoy { console, .. } => console.drain_audio(out),
         }
     }
 
@@ -125,6 +148,11 @@ impl Machine {
                     *button = pressed;
                 }
             }
+            Self::GameBoy { buttons, .. } => {
+                if let Some(button) = game_boy_button(buttons, action) {
+                    *button = pressed;
+                }
+            }
         }
     }
 
@@ -133,6 +161,7 @@ impl Machine {
         match self {
             Self::MasterSystem { joypad, .. } => *joypad = sms::Joypad::default(),
             Self::Genesis { pad, .. } => *pad = genesis::Pad::default(),
+            Self::GameBoy { buttons, .. } => *buttons = gameboy::Buttons::default(),
         }
     }
 
@@ -140,6 +169,7 @@ impl Machine {
         match self {
             Self::MasterSystem { console, .. } => console.save_state(),
             Self::Genesis { console, .. } => console.save_state(),
+            Self::GameBoy { console, .. } => console.save_state(),
         }
     }
 
@@ -147,6 +177,25 @@ impl Machine {
         match self {
             Self::MasterSystem { console, .. } => console.load_state(bytes),
             Self::Genesis { console, .. } => console.load_state(bytes),
+            Self::GameBoy { console, .. } => console.load_state(bytes),
+        }
+    }
+
+    /// RAM do cartucho com bateria (o save do próprio jogo), se houver.
+    pub fn battery_ram(&self) -> Option<&[u8]> {
+        match self {
+            Self::MasterSystem { .. } => None,
+            Self::Genesis { console, .. } => console.battery_ram(),
+            Self::GameBoy { console, .. } => console.battery_ram(),
+        }
+    }
+
+    /// Carrega o save do jogo; `false` se o cartucho não aceita esses bytes.
+    pub fn load_battery_ram(&mut self, bytes: &[u8]) -> bool {
+        match self {
+            Self::MasterSystem { .. } => false,
+            Self::Genesis { console, .. } => console.load_battery_ram(bytes),
+            Self::GameBoy { console, .. } => console.load_battery_ram(bytes),
         }
     }
 }
@@ -181,6 +230,20 @@ fn genesis_button(pad: &mut genesis::Pad, action: Action) -> Option<&mut bool> {
     })
 }
 
+fn game_boy_button(buttons: &mut gameboy::Buttons, action: Action) -> Option<&mut bool> {
+    Some(match action {
+        Action::Up => &mut buttons.up,
+        Action::Down => &mut buttons.down,
+        Action::Left => &mut buttons.left,
+        Action::Right => &mut buttons.right,
+        Action::A => &mut buttons.a,
+        Action::B => &mut buttons.b,
+        Action::Start => &mut buttons.start,
+        Action::Select => &mut buttons.select,
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,6 +272,16 @@ mod tests {
         }
         assert!(pad.up && pad.a && pad.c && pad.x && pad.z && pad.start && pad.mode);
         assert!(genesis_button(&mut pad, Action::Pause).is_none());
+    }
+
+    #[test]
+    fn game_boy_actions_cover_every_button() {
+        let mut buttons = gameboy::Buttons::default();
+        for &action in System::GameBoy.actions() {
+            *game_boy_button(&mut buttons, action).expect("botão do Game Boy") = true;
+        }
+        assert!(buttons.up && buttons.a && buttons.b && buttons.start && buttons.select);
+        assert!(game_boy_button(&mut buttons, Action::C).is_none());
     }
 
     #[test]

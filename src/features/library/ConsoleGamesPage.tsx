@@ -35,14 +35,19 @@ export function ConsoleGamesPage({ console, onBack }: ConsoleGamesPageProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const consoleSettings = useConsoleSettings(console.id, console.playable);
   const resume =
-    consoleSettings.state.status === "ready" && consoleSettings.state.settings.resume;
+    consoleSettings.state.status === "ready" &&
+    consoleSettings.state.settings.resume;
 
   return (
     <main className={styles.page}>
       <h1 className={styles.visuallyHidden}>{console.name}</h1>
       <div className={styles.toolbar}>
         <div className={styles.toolbarActions}>
-          <IconButton icon={ArrowLeft} label="Voltar para consoles" onClick={onBack} />
+          <IconButton
+            icon={ArrowLeft}
+            label="Voltar para consoles"
+            onClick={onBack}
+          />
           {console.supported && <LibraryActions />}
           {console.playable && (
             <IconButton
@@ -76,7 +81,12 @@ export function ConsoleGamesPage({ console, onBack }: ConsoleGamesPageProps) {
         )}
       </div>
 
-      {controlsOpen && <ControlsDialog console={console} onClose={() => setControlsOpen(false)} />}
+      {controlsOpen && (
+        <ControlsDialog
+          console={console}
+          onClose={() => setControlsOpen(false)}
+        />
+      )}
       {settingsOpen && (
         <SettingsDialog
           console={console}
@@ -92,7 +102,11 @@ export function ConsoleGamesPage({ console, onBack }: ConsoleGamesPageProps) {
 function LibraryActions() {
   const { state, choose, choosing, refresh } = useLibrary();
   const folder =
-    state.status === "scanning" ? state.folder : state.status === "ready" ? state.scan.folder : null;
+    state.status === "scanning"
+      ? state.folder
+      : state.status === "ready"
+        ? state.scan.folder
+        : null;
   if (folder === null) return null;
 
   const busy = state.status === "scanning";
@@ -105,7 +119,12 @@ function LibraryActions() {
         onClick={choose}
         disabled={choosing || busy}
       />
-      <IconButton icon={RotateCw} label="Atualizar" onClick={refresh} disabled={busy} />
+      <IconButton
+        icon={RotateCw}
+        label="Atualizar"
+        onClick={refresh}
+        disabled={busy}
+      />
     </>
   );
 }
@@ -144,7 +163,11 @@ function Library({ console, resume }: { console: Console; resume: boolean }) {
           {chooseError}
         </p>
       )}
-      {state.status === "scanning" ? <LoadingGrid /> : <Games console={console} scan={state.scan} resume={resume} />}
+      {state.status === "scanning" ? (
+        <LoadingGrid />
+      ) : (
+        <Games console={console} scan={state.scan} resume={resume} />
+      )}
     </>
   );
 }
@@ -167,9 +190,12 @@ function Games({
     return (
       <div className={styles.panel}>
         <FolderOpen className={styles.panelIcon} aria-hidden="true" />
-        <p className={styles.panelTitle}>Nenhum jogo de {console.name} encontrado</p>
+        <p className={styles.panelTitle}>
+          Nenhum jogo de {console.name} encontrado
+        </p>
         <p className={styles.panelText}>
-          Coloque as ROMs na pasta da biblioteca (ou em subpastas dela) e clique em Atualizar.
+          Coloque as ROMs na pasta da biblioteca (ou em subpastas dela) e clique
+          em Atualizar.
         </p>
       </div>
     );
@@ -191,7 +217,13 @@ function Games({
  * `resume`, jogos com progresso salvo mostram "Continuar" e podem ser
  * recomeçados (após confirmação, porque o progresso é apagado).
  */
-function PlayableGames({ games, resume }: { games: readonly Game[]; resume: boolean }) {
+function PlayableGames({
+  games,
+  resume,
+}: {
+  games: readonly Game[];
+  resume: boolean;
+}) {
   const running = useRunningGame(games);
   const busy = running.gameId !== null;
   const [confirmRestart, setConfirmRestart] = useState<Game | null>(null);
@@ -211,7 +243,11 @@ function PlayableGames({ games, resume }: { games: readonly Game[]; resume: bool
               <GameTile
                 game={game}
                 play={{
-                  status: current ? (running.launching ? "launching" : "running") : "idle",
+                  status: current
+                    ? running.launching
+                      ? "launching"
+                      : "running"
+                    : "idle",
                   disabled: busy && !current,
                   hasSave: resume && running.hasSave(game),
                   onPlay: () => running.launch(game.id),
@@ -245,8 +281,9 @@ function PlayableGames({ games, resume }: { games: readonly Game[]; resume: bool
           }
         >
           <p className={styles.dialogText}>
-            O progresso salvo de <strong>{confirmRestart.title}</strong> será apagado e o jogo vai
-            começar do início.
+            O ponto em que você parou em <strong>{confirmRestart.title}</strong>{" "}
+            será apagado e o jogo vai começar do início. Os saves feitos dentro
+            do próprio jogo continuam guardados.
           </p>
         </Dialog>
       )}
@@ -267,7 +304,13 @@ function LoadingGrid() {
   );
 }
 
-function ErrorPanel({ message, onRetry }: { message: string; onRetry: () => void }) {
+function ErrorPanel({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
   return (
     <div className={styles.panel} role="alert">
       <TriangleAlert className={styles.errorIcon} aria-hidden="true" />

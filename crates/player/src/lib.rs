@@ -70,10 +70,15 @@ impl std::error::Error for PlayerError {}
 ///
 /// Com `state_path`, o jogo continua do estado salvo nesse arquivo (se
 /// existir e for desta ROM) e o estado é gravado nele ao fechar.
+///
+/// Com `battery_path`, a RAM com bateria do cartucho (o save do próprio
+/// jogo) é carregada desse arquivo e gravada nele ao fechar, mesmo sem
+/// `state_path`. O estado salvo, quando existe, vem depois e prevalece.
 pub fn run(
     rom_path: &Path,
     bindings: Bindings,
     state_path: Option<PathBuf>,
+    battery_path: Option<PathBuf>,
 ) -> Result<(), PlayerError> {
     let system = bindings.system();
     let rom = rom::read(rom_path, system).map_err(PlayerError::ReadRom)?;
@@ -88,6 +93,11 @@ pub fn run(
         .as_ref()
         .map_or(FALLBACK_SAMPLE_RATE, |a| a.sample_rate);
     let mut machine = Machine::new(system, rom, sample_rate).map_err(PlayerError::Rom)?;
+    // Sem RAM com bateria não há o que gravar; com um arquivo que não
+    // serve (outro tamanho), ele é preservado em vez de sobrescrito.
+    let battery_path = battery_path
+        .filter(|_| machine.battery_ram().is_some())
+        .filter(|path| load_battery(&mut machine, path));
     if let Some(path) = &state_path {
         resume(&mut machine, path);
     }
@@ -109,6 +119,7 @@ pub fn run(
         window: None,
         bindings,
         state_path,
+        battery_path,
         frame_duration,
         next_frame: Instant::now(),
         error: None,
@@ -134,6 +145,7 @@ struct App {
     window: Option<GameWindow>,
     bindings: Bindings,
     state_path: Option<PathBuf>,
+    battery_path: Option<PathBuf>,
     frame_duration: Duration,
     next_frame: Instant,
     error: Option<PlayerError>,
@@ -231,24 +243,55 @@ fn resume(machine: &mut Machine, path: &Path) {
     }
 }
 
-/// Grava o estado de forma atômica (arquivo temporário + rename), para não
-/// deixar um estado pela metade se o processo morrer durante a escrita.
+/// Carrega o save do jogo. Devolve se o arquivo pode ser sobrescrito ao
+/// fechar: sim se não existe ou foi aceito; não se é de outro tamanho ou
+/// não pôde ser lido (fica intacto para o usuário).
+fn load_battery(machine: &mut Machine, path: &Path) -> bool {
+    match std::fs::read(path) {
+        Ok(bytes) => {
+            let accepted = machine.load_battery_ram(&bytes);
+            if !accepted {
+                eprintln!(
+                    "save do jogo ignorado e preservado ({}): tamanho {} não confere",
+                    path.display(),
+                    bytes.len()
+                );
+            }
+            accepted
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+        Err(e) => {
+            eprintln!("não foi possível ler o save do jogo: {e}");
+            false
+        }
+    }
+}
+
+/// Grava de forma atômica (arquivo temporário + rename), para não deixar
+/// um arquivo pela metade se o processo morrer durante a escrita.
 fn write_state(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let tmp = path.with_extension("state.tmp");
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path)
 }
 
 impl ApplicationHandler for App {
-    /// Fim do loop (janela fechada ou Esc): salva o progresso.
+    /// Fim do loop (janela fechada ou Esc): salva o progresso e o save do
+    /// jogo.
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-        let Some(path) = &self.state_path else {
-            return;
-        };
-        if let Err(e) = write_state(path, &self.machine.save_state()) {
+        if let Some(path) = &self.battery_path
+            && let Some(ram) = self.machine.battery_ram()
+            && let Err(e) = write_state(path, ram)
+        {
+            self.error.get_or_insert(PlayerError::SaveState(e));
+        }
+        if let Some(path) = &self.state_path
+            && let Err(e) = write_state(path, &self.machine.save_state())
+        {
             self.error.get_or_insert(PlayerError::SaveState(e));
         }
     }
@@ -313,6 +356,36 @@ mod tests {
 
     fn sms_machine(rom: Vec<u8>) -> Machine {
         Machine::new(System::MasterSystem, rom, 44_100).expect("ROM válida")
+    }
+
+    /// Game Boy com MBC1 + 8 KB de RAM com bateria, preso num laço.
+    fn game_boy_machine() -> Machine {
+        let mut rom = vec![0; 0x8000];
+        rom[0x100..0x102].copy_from_slice(&[0x18, 0xFE]); // JR -2
+        rom[0x147] = 0x03;
+        rom[0x149] = 0x02;
+        Machine::new(System::GameBoy, rom, 44_100).expect("ROM válida")
+    }
+
+    #[test]
+    fn battery_save_loads_and_wrong_size_is_preserved() {
+        let dir = tempfile::tempdir().expect("pasta temporária");
+        let path = dir.path().join("jogo.sav");
+
+        let mut machine = game_boy_machine();
+        assert!(load_battery(&mut machine, &path), "sem arquivo: pode criar");
+        std::fs::write(&path, vec![0x77; 0x2000]).expect("escrita");
+        let mut machine = game_boy_machine();
+        assert!(load_battery(&mut machine, &path));
+        assert_eq!(machine.battery_ram(), Some(&[0x77; 0x2000][..]));
+
+        std::fs::write(&path, [1, 2, 3]).expect("escrita");
+        let mut machine = game_boy_machine();
+        assert!(
+            !load_battery(&mut machine, &path),
+            "tamanho errado: preserva"
+        );
+        assert_eq!(std::fs::read(&path).expect("leitura"), [1, 2, 3]);
     }
 
     #[test]

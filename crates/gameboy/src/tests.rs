@@ -91,3 +91,18 @@ fn load_state_rejects_other_rom_and_corruption() {
     );
     assert_eq!(console.save_state(), before);
 }
+
+#[test]
+fn battery_ram_only_for_carts_with_battery() {
+    let plain = Console::new(counting_rom(), 44_100).expect("ROM válida");
+    assert!(plain.battery_ram().is_none());
+
+    let mut rom = counting_rom();
+    rom[0x147] = 0x03; // MBC1 + RAM + bateria
+    rom[0x149] = 0x02; // 8 KB
+    let mut console = Console::new(rom, 44_100).expect("ROM válida");
+    let saved = vec![0x5A; 0x2000];
+    assert!(console.load_battery_ram(&saved));
+    assert_eq!(console.battery_ram(), Some(saved.as_slice()));
+    assert!(!console.load_battery_ram(&[0; 10]));
+}

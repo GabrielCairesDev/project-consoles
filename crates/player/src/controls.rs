@@ -15,16 +15,18 @@ use winit::keyboard::KeyCode;
 pub enum System {
     MasterSystem,
     Genesis,
+    GameBoy,
 }
 
 impl System {
-    pub const ALL: [System; 2] = [System::MasterSystem, System::Genesis];
+    pub const ALL: [System; 3] = [System::MasterSystem, System::Genesis, System::GameBoy];
 
     /// Identificador do console no catálogo do launcher.
     pub fn id(self) -> &'static str {
         match self {
             System::MasterSystem => "master-system",
             System::Genesis => "mega-drive",
+            System::GameBoy => "game-boy",
         }
     }
 
@@ -74,6 +76,19 @@ impl System {
                     "ShiftRight",
                 ],
             ),
+            System::GameBoy => (
+                &[Up, Down, Left, Right, A, B, Start, Select],
+                &[
+                    "ArrowUp",
+                    "ArrowDown",
+                    "ArrowLeft",
+                    "ArrowRight",
+                    "KeyX",
+                    "KeyZ",
+                    "Enter",
+                    "ShiftRight",
+                ],
+            ),
         }
     }
 }
@@ -96,10 +111,11 @@ pub enum Action {
     Z,
     Start,
     Mode,
+    Select,
 }
 
 impl Action {
-    pub const ALL: [Action; 15] = [
+    pub const ALL: [Action; 16] = [
         Action::Up,
         Action::Down,
         Action::Left,
@@ -115,6 +131,7 @@ impl Action {
         Action::Z,
         Action::Start,
         Action::Mode,
+        Action::Select,
     ];
 
     /// Identificador estável, usado nas preferências e na interface.
@@ -135,6 +152,7 @@ impl Action {
             Action::Z => "z",
             Action::Start => "start",
             Action::Mode => "mode",
+            Action::Select => "select",
         }
     }
 
@@ -366,6 +384,15 @@ mod tests {
         assert_eq!(b.key(Action::Mode), Some("ShiftRight"));
         assert_eq!(b.action_for(KeyCode::Enter), Some(Action::Start));
         assert_eq!(b.key(Action::Button1), None);
+    }
+
+    #[test]
+    fn game_boy_defaults_put_a_right_of_b() {
+        let b = Bindings::defaults(System::GameBoy);
+        assert_eq!(b.key(Action::A), Some("KeyX"));
+        assert_eq!(b.key(Action::B), Some("KeyZ"));
+        assert_eq!(b.action_for(KeyCode::ShiftRight), Some(Action::Select));
+        assert_eq!(b.key(Action::Mode), None);
     }
 
     #[test]

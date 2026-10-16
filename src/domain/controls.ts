@@ -15,6 +15,7 @@ export const CONTROL_ACTIONS = [
   "z",
   "start",
   "mode",
+  "select",
 ] as const;
 
 export type ControlAction = (typeof CONTROL_ACTIONS)[number];
@@ -50,6 +51,7 @@ export const ACTION_LABELS: Record<ControlAction, string> = {
   z: "Z",
   start: "Start",
   mode: "Mode",
+  select: "Select",
 };
 
 const SPECIAL_KEYS: Record<string, { label: string; name: string }> = {

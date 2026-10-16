@@ -226,6 +226,8 @@ pub async fn launch_game(
         // Desligado: o jogo começa do início e não grava progresso; o que já
         // estava salvo fica intacto para quando a opção voltar.
         state_path: console_settings.resume.then(|| state.saves.path_for(&game)),
+        // O save do próprio jogo vale sempre, com ou sem "continuar".
+        battery_path: Some(state.saves.battery_path_for(&game)),
     };
     let state = Arc::clone(&state);
 

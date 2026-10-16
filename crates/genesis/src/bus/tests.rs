@@ -157,3 +157,16 @@ fn state_round_trips_with_sram() {
     let mut other = system_with_rom(vec![0; 0x1000]);
     assert!(other.load_state(&mut Reader::new(&w.bytes)).is_err());
 }
+
+#[test]
+fn battery_ram_loads_only_with_matching_size() {
+    let mut bus = system_with_rom(rom_with_sram(0x1000));
+    let mut saved = vec![0u8; SRAM_SIZE];
+    saved[1] = 0x42;
+    assert!(bus.load_sram(&saved));
+    assert_eq!(bus.read_byte(0x20_0001), 0x42);
+    assert_eq!(bus.sram().map(<[u8]>::len), Some(SRAM_SIZE));
+    assert!(!bus.load_sram(&[1, 2, 3]));
+    let mut plain = system_with_rom(vec![0; 0x1000]);
+    assert!(plain.sram().is_none() && !plain.load_sram(&saved));
+}

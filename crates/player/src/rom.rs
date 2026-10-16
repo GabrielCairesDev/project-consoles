@@ -35,6 +35,7 @@ fn extensions(system: System) -> &'static [&'static str] {
     match system {
         System::MasterSystem => &["sms"],
         System::Genesis => &["md", "gen", "bin", "smd"],
+        System::GameBoy => &["gb"],
     }
 }
 

@@ -3,6 +3,7 @@ import { Button } from "../../components/Button";
 import { Dialog } from "../../components/Dialog";
 import type { Console } from "../../domain/console";
 import { sameBindings } from "../../domain/controls";
+import { GameBoyController } from "./GameBoyController";
 import { GenesisController } from "./GenesisController";
 import type { ControllerProps } from "./KeyButton";
 import { SmsController } from "./SmsController";
@@ -16,6 +17,7 @@ const CONTROLLERS: Record<
 > = {
   "master-system": SmsController,
   "mega-drive": GenesisController,
+  "game-boy": GameBoyController,
 };
 
 interface ControlsDialogProps {

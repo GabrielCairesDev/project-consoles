@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use player::controls::{Bindings, System};
-use project_consoles_lib::runtime::{CONSOLE_FLAG, KEYS_FLAG, PLAY_FLAG, STATE_FLAG};
+use project_consoles_lib::runtime::{BATTERY_FLAG, CONSOLE_FLAG, KEYS_FLAG, PLAY_FLAG, STATE_FLAG};
 
 /// O mesmo binário é o launcher e, com
 /// `--play <rom> --console <id> [--keys <mapa>] [--state <arquivo>]`, o
@@ -28,7 +28,12 @@ fn main() -> ExitCode {
             return usage();
         }
     };
-    match player::run(Path::new(&rom), options.bindings, options.state) {
+    match player::run(
+        Path::new(&rom),
+        options.bindings,
+        options.state,
+        options.battery,
+    ) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("{e}");
@@ -40,15 +45,18 @@ fn main() -> ExitCode {
 struct PlayOptions {
     bindings: Bindings,
     state: Option<PathBuf>,
+    battery: Option<PathBuf>,
 }
 
-/// `--console <id>` (obrigatório), `--keys <mapa>` e `--state <arquivo>`;
-/// sem `--keys` valem as teclas padrão do console, sem `--state` o
-/// progresso não é salvo.
+/// `--console <id>` (obrigatório), `--keys <mapa>`, `--state <arquivo>` e
+/// `--sav <arquivo>`; sem `--keys` valem as teclas padrão do console, sem
+/// `--state` o progresso não é salvo e sem `--sav` o save do jogo também
+/// não.
 fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions, String> {
     let mut system = None;
     let mut keys = None;
     let mut state = None;
+    let mut battery = None;
     while let Some(flag) = args.next() {
         let value = args
             .next()
@@ -60,6 +68,8 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
             keys = Some(value.into_string().map_err(|_| "mapa de teclas inválido")?);
         } else if flag == STATE_FLAG {
             state = Some(PathBuf::from(value));
+        } else if flag == BATTERY_FLAG {
+            battery = Some(PathBuf::from(value));
         } else {
             return Err(format!(
                 "argumento desconhecido: {}",
@@ -72,12 +82,16 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
         Some(spec) => Bindings::parse_arg(system, &spec).map_err(|e| e.to_string())?,
         None => Bindings::defaults(system),
     };
-    Ok(PlayOptions { bindings, state })
+    Ok(PlayOptions {
+        bindings,
+        state,
+        battery,
+    })
 }
 
 fn usage() -> ExitCode {
     eprintln!(
-        "uso: {PLAY_FLAG} <caminho da ROM> {CONSOLE_FLAG} <id> [{KEYS_FLAG} <ação=tecla,...>] [{STATE_FLAG} <arquivo>]"
+        "uso: {PLAY_FLAG} <caminho da ROM> {CONSOLE_FLAG} <id> [{KEYS_FLAG} <ação=tecla,...>] [{STATE_FLAG} <arquivo>] [{BATTERY_FLAG} <arquivo>]"
     );
     ExitCode::from(2)
 }

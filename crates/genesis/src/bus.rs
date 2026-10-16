@@ -301,6 +301,25 @@ impl System {
     }
 }
 
+impl System {
+    /// RAM do cartucho com bateria, se houver.
+    pub fn sram(&self) -> Option<&[u8]> {
+        self.sram.as_deref().map(|s| &s[..])
+    }
+
+    /// Carrega a RAM do cartucho; recusa (`false`) sem SRAM ou com outro
+    /// tamanho.
+    pub fn load_sram(&mut self, bytes: &[u8]) -> bool {
+        match self.sram.as_mut() {
+            Some(s) if bytes.len() == s.len() => {
+                s.copy_from_slice(bytes);
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
 /// Cabeçalho "RA" em 0x1B0 indica RAM de cartucho com bateria. ROMs acima
 /// de 2 MB (ex.: Sonic 3 & Knuckles) podem ligá-la por A130F1 sem declarar.
 fn has_sram(rom: &[u8]) -> bool {

@@ -1,4 +1,5 @@
-//! Onde fica o estado salvo de cada jogo ("continuar de onde parou").
+//! Onde fica o estado salvo de cada jogo ("continuar de onde parou") e o
+//! save do próprio jogo (RAM com bateria do cartucho, `.sav`).
 //!
 //! Um arquivo por jogo em `<dados do app>/saves/<console>/`. O nome mistura
 //! uma versão legível do caminho do jogo na biblioteca com um hash desse
@@ -28,14 +29,23 @@ impl SaveStore {
     pub fn path_for(&self, game: &Game) -> PathBuf {
         self.dir
             .join(sanitize(&game.console_id))
-            .join(file_name(&game.id))
+            .join(file_name(&game.id, "state"))
+    }
+
+    /// Save do próprio jogo, ao lado do estado. Nunca é apagado pelo
+    /// "Recomeçar do início": é do jogador, como num cartucho de verdade.
+    pub fn battery_path_for(&self, game: &Game) -> PathBuf {
+        self.dir
+            .join(sanitize(&game.console_id))
+            .join(file_name(&game.id, "sav"))
     }
 
     pub fn exists(&self, game: &Game) -> bool {
         self.path_for(game).is_file()
     }
 
-    /// Apaga o estado salvo; não ter estado nenhum não é erro.
+    /// Apaga o estado salvo (não o save do jogo); não ter estado nenhum não
+    /// é erro.
     pub fn delete(&self, game: &Game) -> io::Result<()> {
         match fs::remove_file(self.path_for(game)) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
@@ -44,9 +54,9 @@ impl SaveStore {
     }
 }
 
-fn file_name(game_id: &str) -> String {
+fn file_name(game_id: &str, extension: &str) -> String {
     let stem: String = sanitize(game_id).chars().take(MAX_STEM_CHARS).collect();
-    format!("{stem}-{:016x}.state", fnv1a(game_id.as_bytes()))
+    format!("{stem}-{:016x}.{extension}", fnv1a(game_id.as_bytes()))
 }
 
 /// Mantém letras, dígitos e pontuação segura em todos os sistemas.
@@ -130,8 +140,13 @@ mod tests {
         let path = store.path_for(&g);
         fs::create_dir_all(path.parent().expect("pasta pai")).expect("pasta");
         fs::write(&path, b"estado").expect("escrita");
+        let battery = store.battery_path_for(&g);
+        fs::write(&battery, b"save do jogo").expect("escrita");
         assert!(store.exists(&g));
         store.delete(&g).expect("apaga");
         assert!(!store.exists(&g));
+        assert!(battery.is_file(), "o save do jogo continua");
+        assert_eq!(battery.parent(), path.parent());
+        assert_ne!(battery, path);
     }
 }

@@ -302,4 +302,51 @@ describe("ControlsDialog", () => {
       c: "KeyJ",
     });
   });
+
+  it("game boy mostra cruz, A, B, Select e Start", async () => {
+    const gameBoy: Bindings = {
+      up: "ArrowUp",
+      down: "ArrowDown",
+      left: "ArrowLeft",
+      right: "ArrowRight",
+      a: "KeyX",
+      b: "KeyZ",
+      start: "Enter",
+      select: "ShiftRight",
+    };
+    getMock.mockResolvedValue({
+      actions: ["up", "down", "left", "right", "a", "b", "start", "select"],
+      bindings: gameBoy,
+      defaults: gameBoy,
+      supportedKeys: ["KeyX", "KeyZ", "KeyJ", "Enter", "ShiftRight"],
+    });
+    render(
+      <ControlsDialog
+        console={{ ...SMS, id: "game-boy", name: "Game Boy" }}
+        onClose={vi.fn()}
+      />,
+    );
+
+    await screen.findByRole("button", { name: "A: X" });
+    for (const name of [
+      "B: Z",
+      "Start: Enter",
+      "Select: Shift direito",
+      "Cima: Seta para cima",
+    ]) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    }
+    expect(
+      screen.queryByRole("button", { name: /Mode|Pause/ }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Select: Shift direito" }),
+    );
+    pressKey("KeyJ");
+    expect(saveMock).toHaveBeenCalledWith("game-boy", {
+      ...gameBoy,
+      select: "KeyJ",
+    });
+  });
 });

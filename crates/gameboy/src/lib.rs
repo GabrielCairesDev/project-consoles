@@ -108,19 +108,15 @@ impl Console {
         }
     }
 
-    /// O cartucho tem RAM com bateria (o jogo salva nela).
-    pub fn has_battery(&self) -> bool {
-        self.bus.cart.has_battery()
+    /// RAM do cartucho com bateria (o save do próprio jogo), se houver.
+    pub fn battery_ram(&self) -> Option<&[u8]> {
+        self.bus.cart.has_battery().then(|| self.bus.cart.ram())
     }
 
-    /// RAM do cartucho, para gravar o save do jogo.
-    pub fn cart_ram(&self) -> &[u8] {
-        self.bus.cart.ram()
-    }
-
-    /// Carrega o save do jogo; tamanho diferente do cartucho é recusado.
-    pub fn load_cart_ram(&mut self, bytes: &[u8]) -> bool {
-        self.bus.cart.load_ram(bytes)
+    /// Carrega o save do jogo; tamanho errado ou cartucho sem bateria é
+    /// recusado (`false`) e nada muda.
+    pub fn load_battery_ram(&mut self, bytes: &[u8]) -> bool {
+        self.bus.cart.has_battery() && self.bus.cart.load_ram(bytes)
     }
 
     /// Bytes enviados pela porta serial (usado por ROMs de teste).
