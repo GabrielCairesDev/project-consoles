@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["src-tauri", "crates/sms", "crates/player"]
+members = ["src-tauri", "crates/chips", "crates/sms", "crates/genesis", "crates/player"]
 
 [workspace.package]
 edition = "2024"
@@ -17,4 +17,10 @@ strip = true
 
 # O núcleo roda a cada ciclo de CPU: em debug ficaria lento demais para jogar.
 [profile.dev.package.sms]
+opt-level = 3
+
+[profile.dev.package.chips]
+opt-level = 3
+
+[profile.dev.package.genesis]
 opt-level = 3

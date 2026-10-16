@@ -1,0 +1,11 @@
+[package]
+name = "chips"
+version = "0.1.0"
+description = "Chips compartilhados entre os núcleos: Z80, SN76489 e o formato de estado salvo"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints.rust]
+unsafe_code = "forbid"

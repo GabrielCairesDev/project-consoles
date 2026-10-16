@@ -1,0 +1,18 @@
+[package]
+name = "genesis"
+version = "0.1.0"
+description = "Núcleo do Mega Drive / Genesis em safe Rust: 68000, VDP, YM2612 e Z80 de som"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+chips = { path = "../chips" }
+
+[dev-dependencies]
+flate2 = "1.1.10"
+serde_json = "1.0.154"
+
+[lints.rust]
+unsafe_code = "forbid"

@@ -1,15 +1,12 @@
-//! Formato binário dos estados salvos ("save states").
+//! Primitivas do formato binário dos estados salvos ("save states").
 //!
-//! Layout: `MAGIC`, versão (`u16`), hash da ROM (`u64`) e as seções de CPU,
-//! barramento, VDP e PSG, em little-endian e sem preenchimento. O hash
+//! Cada núcleo grava um cabeçalho próprio (assinatura, versão, hash da ROM)
+//! e as seções de seus chips, em little-endian e sem preenchimento. O hash
 //! impede carregar o estado de outro jogo; a versão permite mudar o formato
 //! no futuro sem interpretar lixo. Todo valor lido que vira índice ou enum é
 //! validado: um arquivo corrompido gera erro, nunca pânico.
 
 use std::fmt;
-
-pub(crate) const MAGIC: &[u8; 8] = b"PCSMSST\0";
-pub(crate) const VERSION: u16 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StateError {
@@ -41,14 +38,14 @@ impl fmt::Display for StateError {
 impl std::error::Error for StateError {}
 
 /// Hash FNV-1a de 64 bits: rápido, estável entre versões e sem dependência.
-pub(crate) fn rom_hash(rom: &[u8]) -> u64 {
+pub fn rom_hash(rom: &[u8]) -> u64 {
     rom.iter().fold(0xcbf2_9ce4_8422_2325, |h, &b| {
         (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
     })
 }
 
 #[derive(Default)]
-pub(crate) struct Writer {
+pub struct Writer {
     pub bytes: Vec<u8>,
 }
 
@@ -73,7 +70,7 @@ impl Writer {
     }
 }
 
-pub(crate) struct Reader<'a> {
+pub struct Reader<'a> {
     bytes: &'a [u8],
 }
 

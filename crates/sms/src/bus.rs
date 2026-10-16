@@ -1,10 +1,10 @@
 //! Barramento do Master System: mapa de memória, mapper Sega e portas.
 
-use crate::psg::Psg;
-use crate::state::{Reader, StateError, Writer};
 use crate::vdp::Vdp;
 use crate::z80::Bus;
 use crate::{CYCLES_PER_LINE, Joypad};
+use chips::psg::Psg;
+use chips::state::{Reader, StateError, Writer};
 
 pub(crate) const BANK_SIZE: usize = 0x4000;
 const RAM_SIZE: usize = 0x2000;

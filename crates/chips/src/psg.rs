@@ -165,7 +165,7 @@ impl Psg {
 }
 
 impl Psg {
-    pub(crate) fn save_state(&self, w: &mut Writer) {
+    pub fn save_state(&self, w: &mut Writer) {
         for v in self.tone {
             w.u16(v);
         }
@@ -185,7 +185,7 @@ impl Psg {
 
     /// O estado do reamostrador não é salvo: recomeça do zero sem efeito
     /// audível.
-    pub(crate) fn load_state(&mut self, r: &mut Reader<'_>) -> Result<(), StateError> {
+    pub fn load_state(&mut self, r: &mut Reader<'_>) -> Result<(), StateError> {
         for v in &mut self.tone {
             *v = r.u16()? & 0x3FF;
         }

@@ -3,14 +3,14 @@
 //! Os programas não são versionados (licença GPL). Para rodar:
 //!
 //! ```text
-//! ZEX_PATH=/caminho/zexdoc.com cargo test -p sms --release --test zex -- --ignored --nocapture
+//! ZEX_PATH=/caminho/zexdoc.com cargo test -p chips --release --test zex -- --ignored --nocapture
 //! ```
 //!
 //! Harness CP/M mínimo: o programa é carregado em 0x0100, a chamada BDOS em
 //! 0x0005 é interceptada (funções 2 e 9, saída de texto) e o salto para
 //! 0x0000 encerra a execução.
 
-use sms::z80::{Bus, Z80};
+use chips::z80::{Bus, Z80};
 
 struct CpmBus {
     mem: Vec<u8>,

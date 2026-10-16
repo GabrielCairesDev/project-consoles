@@ -477,7 +477,7 @@ impl Z80 {
 }
 
 impl Z80 {
-    pub(crate) fn save_state(&self, w: &mut crate::state::Writer) {
+    pub fn save_state(&self, w: &mut crate::state::Writer) {
         for v in [
             self.a, self.f, self.b, self.c, self.d, self.e, self.h, self.l,
         ] {
@@ -511,7 +511,7 @@ impl Z80 {
         }
     }
 
-    pub(crate) fn load_state(
+    pub fn load_state(
         &mut self,
         r: &mut crate::state::Reader<'_>,
     ) -> Result<(), crate::state::StateError> {

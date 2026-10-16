@@ -9,10 +9,11 @@
 //! funcionam corretamente.
 
 mod bus;
-mod psg;
-mod state;
 pub mod vdp;
-pub mod z80;
+
+use chips::psg;
+use chips::state;
+pub use chips::z80;
 
 use std::fmt;
 
@@ -20,7 +21,7 @@ use bus::{BANK_SIZE, SmsBus};
 use psg::Psg;
 use z80::Z80;
 
-pub use state::StateError;
+pub use chips::state::StateError;
 pub use vdp::{HEIGHT as SCREEN_HEIGHT, WIDTH as SCREEN_WIDTH};
 
 /// Clock da CPU no NTSC (Hz).
@@ -33,6 +34,9 @@ pub const FRAME_RATE: f64 =
 
 /// Maior cartucho oficial tem 512 KB; 4 MB dá folga para hacks e homebrew.
 const MAX_ROM_SIZE: usize = 4 * 1024 * 1024;
+/// Assinatura e versão do formato de estado salvo deste núcleo.
+const STATE_MAGIC: &[u8; 8] = b"PCSMSST\0";
+const STATE_VERSION: u16 = 1;
 /// Cabeçalho de copiadora presente em alguns dumps.
 const COPIER_HEADER: usize = 512;
 
@@ -127,8 +131,8 @@ impl Console {
     /// chamado entre quadros (depois de [`Console::run_frame`]).
     pub fn save_state(&self) -> Vec<u8> {
         let mut w = state::Writer::default();
-        w.slice(state::MAGIC);
-        w.u16(state::VERSION);
+        w.slice(STATE_MAGIC);
+        w.u16(STATE_VERSION);
         w.u64(self.rom_hash);
         self.cpu.save_state(&mut w);
         self.bus.save_state(&mut w);
@@ -142,11 +146,11 @@ impl Console {
         let mut r = state::Reader::new(bytes);
         let mut magic = [0; 8];
         r.fill(&mut magic).map_err(|_| StateError::NotAState)?;
-        if &magic != state::MAGIC {
+        if &magic != STATE_MAGIC {
             return Err(StateError::NotAState);
         }
         let version = r.u16()?;
-        if version != state::VERSION {
+        if version != STATE_VERSION {
             return Err(StateError::UnsupportedVersion(version));
         }
         if r.u64()? != self.rom_hash {

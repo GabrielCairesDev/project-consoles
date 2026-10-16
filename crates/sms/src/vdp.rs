@@ -5,7 +5,7 @@
 //! registradores feitas por interrupções de linha (efeitos raster) valham a
 //! partir da linha seguinte, como no hardware.
 
-use crate::state::{Reader, StateError, Writer};
+use chips::state::{Reader, StateError, Writer};
 
 pub const WIDTH: usize = 256;
 pub const HEIGHT: usize = 192;
