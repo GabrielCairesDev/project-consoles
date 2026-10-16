@@ -1233,6 +1233,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gameboy"
+version = "0.1.0"
+dependencies = [
+ "chips",
+]
+
+[[package]]
 name = "gdk"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

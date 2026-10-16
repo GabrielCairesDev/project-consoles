@@ -1,0 +1,14 @@
+[package]
+name = "gameboy"
+version = "0.1.0"
+description = "Núcleo do Game Boy (DMG) em safe Rust: CPU SM83, PPU, APU e cartuchos"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+chips = { path = "../chips" }
+
+[lints.rust]
+unsafe_code = "forbid"
