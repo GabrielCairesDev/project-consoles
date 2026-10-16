@@ -176,10 +176,11 @@ describe("ConsoleGamesPage", () => {
     scanMock.mockReturnValue(deferred<LibraryScan>().promise);
     renderPage();
 
-    const status = await screen.findByRole("status");
+    // Na fase de varredura a pasta já é conhecida: a barra aparece, desativada.
+    expect(await screen.findByRole("button", { name: "Atualizar" })).toBeDisabled();
+    const status = screen.getByRole("status");
     expect(status).toHaveAttribute("aria-busy", "true");
     expect(status).toHaveTextContent("Carregando jogos…");
-    expect(screen.getByRole("button", { name: "Atualizar" })).toBeDisabled();
   });
 
   it("sem jogos do console, explica onde colocar as ROMs", async () => {

@@ -23,3 +23,17 @@ export interface CoverImage {
   src: string;
   kind: CoverKind;
 }
+
+/** Quantidade de jogos por `consoleId`. */
+export function countGamesByConsole(games: readonly Game[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const game of games) {
+    counts.set(game.consoleId, (counts.get(game.consoleId) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/** Ex.: 1 → "1 jogo"; 12 → "12 jogos". */
+export function formatGameCount(count: number): string {
+  return count === 1 ? "1 jogo" : `${count} jogos`;
+}

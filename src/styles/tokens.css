@@ -25,6 +25,8 @@
   --color-accent: #f43f5e;
   --color-on-accent: #000000;
   --color-focus-ring: #a78bfa;
+  /* Brilho do placeholder de carregamento. */
+  --color-shimmer: rgb(167 139 250 / 0.14);
 
   /* Cores: semânticas */
   --color-success: #22c55e;
@@ -79,6 +81,7 @@
   --duration-normal: 200ms;
   --duration-slow: 320ms;
   --duration-pulse: 1.6s;
+  --duration-shimmer: 1.4s;
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 
   /* Logos de consoles: caixa interna do quadro da grade. */
@@ -88,6 +91,7 @@
   /* Controles */
   --control-height: 2.5rem;
   --control-height-sm: 2rem;
+  --count-badge-size: 1.5rem;
 
   /* Estados */
   --loading-delay: 150ms;

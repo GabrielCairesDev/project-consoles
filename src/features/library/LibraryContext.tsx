@@ -7,7 +7,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import type { LibraryScan } from "../../domain/game";
+import { type LibraryScan, countGamesByConsole } from "../../domain/game";
 import { chooseLibraryDir, getLibraryDir, scanLibrary } from "../../services/library";
 import { clearCoverCache } from "./useCover";
 
@@ -127,4 +127,16 @@ export function useLibrary(): LibraryContextValue {
   const value = useContext(LibraryContext);
   if (!value) throw new Error("useLibrary precisa de <LibraryProvider>");
   return value;
+}
+
+const NO_COUNTS: ReadonlyMap<string, number> = new Map();
+
+/**
+ * Jogos encontrados por console. Vazio enquanto a biblioteca não foi varrida
+ * ou fora de um `<LibraryProvider>`.
+ */
+export function useGameCounts(): ReadonlyMap<string, number> {
+  const scan = useContext(LibraryContext)?.state;
+  const games = scan?.status === "ready" ? scan.scan.games : null;
+  return useMemo(() => (games ? countGamesByConsole(games) : NO_COUNTS), [games]);
 }
