@@ -6,9 +6,8 @@
 //! O BIOS é do usuário: o console não liga sem ele (o da Sony é
 //! proprietário e não vem junto).
 //!
-//! Estado atual: CPU, memória, interrupções, timers, DMA e o tempo de
-//! vídeo. A GPU ainda não desenha, e CD-ROM, SPU, MDEC e controles são só
-//! registradores.
+//! Estado atual: CPU, GTE, memória, interrupções, timers, DMA e a GPU.
+//! CD-ROM, SPU, MDEC e controles ainda são só registradores.
 
 mod bus;
 mod cdrom;
@@ -191,6 +190,17 @@ impl Console {
             self.cpu.set_register(30, stack);
         }
         self.cpu.jump_to(exe.pc);
+    }
+
+    /// Imagem do último quadro, `0x00RRGGBB`, e o tamanho (largura,
+    /// altura), que muda com o modo de vídeo.
+    pub fn framebuffer(&self) -> (&[u32], (usize, usize)) {
+        self.bus.gpu.frame()
+    }
+
+    /// VRAM inteira (1024×512 pixels de 15 bits), para depuração e testes.
+    pub fn vram(&self) -> &[u16] {
+        &self.bus.gpu.renderer.vram
     }
 
     /// Texto escrito pelo BIOS (putchar), usado pelos programas de teste.

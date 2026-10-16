@@ -301,7 +301,12 @@ impl Bus {
                     self.cdrom.write((offset + i) & 3, (value >> (8 * i)) as u8);
                 }
             }
-            0x810..=0x813 => self.gpu.gp0(value),
+            0x810..=0x813 => {
+                self.gpu.gp0(value);
+                if self.gpu.take_irq() {
+                    self.irq.request(Irq::Gpu);
+                }
+            }
             0x814..=0x817 => {
                 self.sync_devices();
                 self.gpu.gp1(value);
@@ -388,6 +393,9 @@ impl Bus {
             }
         }
         self.now += cycles;
+        if self.gpu.take_irq() {
+            self.irq.request(Irq::Gpu);
+        }
         if self.dma.finish(ch) {
             self.irq.request(Irq::Dma);
         }

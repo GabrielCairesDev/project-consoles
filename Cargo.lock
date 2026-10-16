@@ -3189,6 +3189,7 @@ name = "psx"
 version = "0.1.0"
 dependencies = [
  "chips",
+ "png 0.18.1",
 ]
 
 [[package]]

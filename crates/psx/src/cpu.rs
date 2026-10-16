@@ -75,6 +75,8 @@ pub(crate) struct Cpu {
     next_load: (usize, u32),
     /// Ciclo em que o resultado de MULT/DIV fica pronto.
     muldiv_ready: u64,
+    /// Ciclo em que o comando do GTE em andamento termina.
+    gte_ready: u64,
     cop0: Cop0,
     pub(crate) gte: Gte,
     /// Tags do cache de instruções (4 KB, 256 linhas de 16 bytes): endereço
@@ -96,6 +98,7 @@ impl Default for Cpu {
             load: (0, 0),
             next_load: (0, 0),
             muldiv_ready: 0,
+            gte_ready: 0,
             cop0: Cop0::default(),
             gte: Gte::default(),
             icache: Box::new([0; 256]),
@@ -168,7 +171,7 @@ impl Cpu {
             if self.pc & 3 == 0 {
                 let next = bus.peek_code(self.pc);
                 if next >> 25 == 0x25 {
-                    self.gte.command(next);
+                    self.gte_ready = bus.now + self.gte.command(next);
                 }
             }
             self.exception(Exception::Interrupt);
@@ -331,7 +334,7 @@ impl Cpu {
                     self.cop0_op(bus, i);
                 }
             }
-            0x12 => self.cop2_op(i),
+            0x12 => self.cop2_op(bus, i),
             // O PS1 não tem COP1 nem COP3: habilitados, viram NOP.
             0x11 | 0x13 => {
                 self.require_coprocessor((i >> 26) & 3);
@@ -449,6 +452,7 @@ impl Cpu {
                 }
                 let addr = self.address(i);
                 if self.check_store_alignment(addr, 3) {
+                    self.wait_gte(bus);
                     let v = self.gte.read_data(rt(i));
                     self.store(bus, addr, v, 4);
                 }
@@ -610,6 +614,12 @@ impl Cpu {
         }
     }
 
+    fn wait_gte(&self, bus: &mut Bus) {
+        if bus.now < self.gte_ready {
+            bus.now = self.gte_ready;
+        }
+    }
+
     fn wait_muldiv(&self, bus: &mut Bus) {
         if bus.now < self.muldiv_ready {
             bus.now = self.muldiv_ready;
@@ -662,12 +672,14 @@ impl Cpu {
         }
     }
 
-    fn cop2_op(&mut self, i: u32) {
+    fn cop2_op(&mut self, bus: &mut Bus, i: u32) {
         if !self.require_coprocessor(2) {
             return;
         }
+        // O GTE executa um comando por vez; ler resultados também espera.
+        self.wait_gte(bus);
         if i & (1 << 25) != 0 {
-            self.gte.command(i);
+            self.gte_ready = bus.now + self.gte.command(i);
             return;
         }
         match rs(i) {

@@ -12,3 +12,6 @@ chips = { path = "../chips" }
 
 [lints.rust]
 unsafe_code = "forbid"
+
+[dev-dependencies]
+png = "0.18.1"

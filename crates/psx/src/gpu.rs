@@ -1,8 +1,10 @@
-//! GPU: registradores GP0/GP1, GPUSTAT e o tempo de vídeo (linhas, hblank
-//! e V-blank, NTSC e PAL).
-//!
-//! Por enquanto os comandos de desenho do GP0 são aceitos e descartados; o
-//! rasterizador chega na etapa de vídeo.
+//! GPU: registradores GP1, GPUSTAT, o tempo de vídeo (linhas, hblank e
+//! V-blank, NTSC e PAL) e a imagem mostrada. Os comandos de desenho do GP0
+//! ficam em [`render`].
+
+mod render;
+
+use render::{Renderer, VRAM_HEIGHT, VRAM_WIDTH};
 
 /// Clock da GPU = 11/7 do clock da CPU.
 const CLOCK_NUM: u64 = 11;
@@ -33,8 +35,7 @@ pub(crate) struct Gpu {
     in_vblank: bool,
     /// Campo do entrelaçado (GPUSTAT bit 13).
     odd_field: bool,
-    /// Bits 0–10 do GPUSTAT (vêm do comando E1 do GP0).
-    draw_mode: u32,
+    pub(crate) renderer: Renderer,
     /// Modo de vídeo (GP1 08h), bits 0–7.
     display_mode: u32,
     display_disabled: bool,
@@ -46,10 +47,11 @@ pub(crate) struct Gpu {
     horizontal_range: (u32, u32),
     /// Faixa vertical (GP1 07h), em linhas.
     vertical_range: (u16, u16),
-    /// Palavra lida em GPUREAD.
-    read_latch: u32,
     /// Chegou ao V-blank desde a última consulta.
     pub(crate) frame_done: bool,
+    /// Imagem do último quadro, `0x00RRGGBB`, e o tamanho.
+    frame: Vec<u32>,
+    frame_size: (usize, usize),
 }
 
 impl Default for Gpu {
@@ -61,7 +63,7 @@ impl Default for Gpu {
             line: 0,
             in_vblank: true,
             odd_field: false,
-            draw_mode: 0,
+            renderer: Renderer::default(),
             display_mode: 0,
             display_disabled: true,
             irq: false,
@@ -69,8 +71,9 @@ impl Default for Gpu {
             display_start: (0, 0),
             horizontal_range: (0, 0),
             vertical_range: (0, 0),
-            read_latch: 0,
             frame_done: false,
+            frame: vec![0; 320 * 240],
+            frame_size: (320, 240),
         };
         gpu.reset();
         gpu
@@ -79,7 +82,7 @@ impl Default for Gpu {
 
 impl Gpu {
     fn reset(&mut self) {
-        self.draw_mode = 0;
+        self.renderer.reset();
         self.display_mode = 0;
         self.display_disabled = true;
         self.irq = false;
@@ -201,13 +204,73 @@ impl Gpu {
                     self.odd_field = false;
                 }
                 self.frame_done = true;
+                self.capture_frame();
             }
             on_event(self, VideoEvent::Vblank(vblank), at);
         }
     }
 
+    /// Largura e altura visíveis no modo atual.
+    fn display_size(&self) -> (usize, usize) {
+        let width = if self.display_mode & (1 << 6) != 0 {
+            368
+        } else {
+            [256, 320, 512, 640][(self.display_mode & 3) as usize]
+        };
+        let (y1, y2) = self.vertical_range;
+        let lines =
+            usize::from(y2.saturating_sub(y1)).clamp(1, if self.is_pal() { 288 } else { 240 });
+        let double = self.interlaced() && self.display_mode & (1 << 2) != 0;
+        (width, if double { lines * 2 } else { lines })
+    }
+
+    /// Copia a área de display da VRAM para a imagem do quadro.
+    fn capture_frame(&mut self) {
+        let (width, height) = self.display_size();
+        self.frame_size = (width, height);
+        self.frame.resize(width * height, 0);
+        if self.display_disabled {
+            self.frame.fill(0);
+            return;
+        }
+        let (sx, sy) = (
+            usize::from(self.display_start.0),
+            usize::from(self.display_start.1),
+        );
+        let vram = &self.renderer;
+        let rgb24 = self.display_mode & (1 << 4) != 0;
+        for (y, row) in self.frame.chunks_exact_mut(width).enumerate() {
+            let vy = (sy + y) % VRAM_HEIGHT;
+            if rgb24 {
+                // 3 bytes por pixel, a partir do halfword sx da linha.
+                let byte = |i: usize| {
+                    let half = vram.pixel((sx + i / 2) % VRAM_WIDTH, vy);
+                    if i.is_multiple_of(2) {
+                        half & 0xFF
+                    } else {
+                        half >> 8
+                    }
+                };
+                for (x, out) in row.iter_mut().enumerate() {
+                    let i = x * 3;
+                    let (r, g, b) = (byte(i), byte(i + 1), byte(i + 2));
+                    *out = (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b);
+                }
+            } else {
+                for (x, out) in row.iter_mut().enumerate() {
+                    *out = rgb555_to_rgb888(vram.pixel((sx + x) % VRAM_WIDTH, vy));
+                }
+            }
+        }
+    }
+
+    /// Imagem do último quadro mostrado e o tamanho (largura, altura).
+    pub(crate) fn frame(&self) -> (&[u32], (usize, usize)) {
+        (&self.frame, self.frame_size)
+    }
+
     pub(crate) fn status(&self) -> u32 {
-        let mut stat = self.draw_mode & 0x7FF;
+        let mut stat = self.renderer.status_bits();
         // Sem entrelaçado, o bit do campo fica em 1.
         stat |= u32::from(self.odd_field || !self.interlaced()) << 13;
         // Modo de vídeo: bits 0–5 → 17–22, bit 6 → 16, bit 7 → 14.
@@ -216,8 +279,9 @@ impl Gpu {
         stat |= ((self.display_mode >> 7) & 1) << 14;
         stat |= u32::from(self.display_disabled) << 23;
         stat |= u32::from(self.irq) << 24;
-        // Sempre pronta para comandos e DMA; nada a enviar à CPU.
+        // Sempre pronta para comandos e DMA (o desenho é instantâneo).
         stat |= 0b101 << 26;
+        stat |= u32::from(self.renderer.has_read_data()) << 27;
         stat |= self.dma_direction << 29;
         let request = match self.dma_direction {
             0 => 0,
@@ -237,21 +301,32 @@ impl Gpu {
         stat
     }
 
-    pub(crate) fn read(&self) -> u32 {
-        self.read_latch
+    pub(crate) fn read(&mut self) -> u32 {
+        self.renderer.read()
     }
 
     pub(crate) fn gp0(&mut self, word: u32) {
-        if word >> 24 == 0xE1 {
-            self.draw_mode = word & 0x7FF;
+        self.renderer.gp0(word);
+    }
+
+    /// O GP0 pediu interrupção (comando 1Fh) desde a última consulta.
+    pub(crate) fn take_irq(&mut self) -> bool {
+        if self.renderer.irq_requested && !self.irq {
+            self.irq = true;
+            return true;
         }
+        false
     }
 
     pub(crate) fn gp1(&mut self, word: u32) {
         let value = word & 0x00FF_FFFF;
         match word >> 24 {
             0x00 => self.reset(),
-            0x02 => self.irq = false,
+            0x01 => self.renderer.reset_command_buffer(),
+            0x02 => {
+                self.irq = false;
+                self.renderer.irq_requested = false;
+            }
             0x03 => self.display_disabled = value & 1 != 0,
             0x04 => self.dma_direction = value & 3,
             0x05 => {
@@ -262,11 +337,18 @@ impl Gpu {
                 self.vertical_range = ((value & 0x3FF) as u16, ((value >> 10) & 0x3FF) as u16);
             }
             0x08 => self.display_mode = value & 0xFF,
-            // Versão da GPU.
-            0x10..=0x1F if value & 7 == 7 => self.read_latch = 2,
+            0x10..=0x1F => self.renderer.info(value),
             _ => {}
         }
     }
+}
+
+fn rgb555_to_rgb888(pixel: u16) -> u32 {
+    let expand = |c: u16| {
+        let c = u32::from(c & 0x1F);
+        (c << 3) | (c >> 2)
+    };
+    (expand(pixel) << 16) | (expand(pixel >> 5) << 8) | expand(pixel >> 10)
 }
 
 #[cfg(test)]
