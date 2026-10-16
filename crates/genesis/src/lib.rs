@@ -185,12 +185,13 @@ impl Console {
         for (psg, fm) in self
             .psg_pending
             .iter()
-            .zip(self.fm_pending.chunks_exact(2))
+            .zip(self.fm_pending.as_chunks::<2>().0)
             .take(frames)
         {
             let p = psg * PSG_GAIN;
-            out.push((fm[0] + p).clamp(-1.0, 1.0));
-            out.push((fm[1] + p).clamp(-1.0, 1.0));
+            let [l, r] = *fm;
+            out.push((l + p).clamp(-1.0, 1.0));
+            out.push((r + p).clamp(-1.0, 1.0));
         }
         self.psg_pending.drain(..frames);
         self.fm_pending.drain(..frames * 2);
