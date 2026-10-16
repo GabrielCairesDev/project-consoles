@@ -1,0 +1,11 @@
+[package]
+name = "sms"
+version = "0.1.0"
+description = "Núcleo do Master System em safe Rust: Z80, VDP, PSG e mapper Sega"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints.rust]
+unsafe_code = "forbid"

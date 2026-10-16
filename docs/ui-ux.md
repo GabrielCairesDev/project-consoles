@@ -1,7 +1,7 @@
 # UI/UX Engineering — Regras Permanentes do Projeto
 
 ## 1. Objetivo
-Desenvolver um launcher de emulação multiplataforma com aparência profissional, identidade visual própria, excelente usabilidade e desempenho consistente em macOS, Windows e Linux. A interface deve transmitir a qualidade de um produto comercial moderno, com referências em launchers de jogos, bibliotecas digitais e aplicativos desktop premium.
+Desenvolver um launcher multiplataforma de jogos clássicos, que roda os jogos com núcleos próprios em Rust (um por console), com aparência profissional, identidade visual própria, excelente usabilidade e desempenho consistente em macOS, Windows e Linux. A interface deve transmitir a qualidade de um produto comercial moderno, com referências em launchers de jogos, bibliotecas digitais e aplicativos desktop premium.
 
 Não produza interfaces genéricas, com aparência de protótipo, painéis excessivamente simples ou componentes sem identidade visual.
 

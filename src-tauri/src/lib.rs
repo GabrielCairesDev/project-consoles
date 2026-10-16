@@ -4,6 +4,7 @@ pub mod covers;
 pub mod dat;
 pub mod identify;
 pub mod library;
+pub mod runtime;
 pub mod settings;
 pub mod systems;
 
@@ -38,6 +39,7 @@ pub fn run() {
             commands::set_library_dir,
             commands::scan_library,
             commands::game_cover,
+            commands::launch_game,
         ])
         .run(tauri::generate_context!())
         .expect("falha ao iniciar a aplicação Tauri");

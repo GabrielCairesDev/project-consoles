@@ -1,10 +1,10 @@
 [package]
 name = "project-consoles"
 version = "0.1.0"
-description = "Launcher de emulação multiplataforma"
-authors = ["Gabriel Caires"]
-edition = "2024"
-rust-version = "1.95"
+description = "Launcher multiplataforma de jogos clássicos"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
@@ -25,15 +25,9 @@ zip = { version = "9.0.3", default-features = false }
 ureq = "3.4.2"
 png = "0.18.1"
 tauri-plugin-dialog = "2.8.3"
+player = { path = "../crates/player" }
 
 
-# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
-[profile.release]
-codegen-units = 1
-lto = true
-opt-level = 3
-panic = "abort"
-strip = true
 
 [dev-dependencies]
 tempfile = "3.27.0"

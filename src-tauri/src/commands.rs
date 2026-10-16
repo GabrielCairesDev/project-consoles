@@ -6,11 +6,12 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::catalog::{self, Console};
 use crate::covers::{Cover, CoverStore, LibretroThumbnails};
 use crate::library::{self, FingerprintCache, Game};
+use crate::runtime::{self, Runner};
 use crate::settings::Settings;
 use crate::systems;
 
@@ -25,6 +26,7 @@ pub struct AppState {
     games: Mutex<HashMap<String, Game>>,
     covers: CoverStore,
     boxarts: LibretroThumbnails,
+    runner: Runner,
 }
 
 impl AppState {
@@ -47,6 +49,7 @@ impl AppState {
             games: Mutex::new(HashMap::new()),
             covers: CoverStore::new(cache_dir.join("covers")),
             boxarts: LibretroThumbnails::default(),
+            runner: Runner::default(),
         }
     }
 }
@@ -68,6 +71,8 @@ pub struct ConsoleInfo {
     console: Console,
     /// O app reconhece ROMs deste console.
     supported: bool,
+    /// O app consegue rodar jogos deste console.
+    playable: bool,
 }
 
 /// Lista o catálogo de consoles para a interface.
@@ -78,6 +83,7 @@ pub fn list_consoles() -> Vec<ConsoleInfo> {
         .map(|&console| ConsoleInfo {
             console,
             supported: systems::for_console(console.id).is_some(),
+            playable: runtime::is_playable(console.id),
         })
         .collect()
 }
@@ -167,6 +173,46 @@ pub async fn game_cover(
             .covers
             .resolve(system, &game, &state.boxarts)
             .map_err(|error| format!("Não foi possível obter a capa: {error}"))
+    })
+    .await
+    .map_err(|error| format!("Falha interna: {error}"))?
+}
+
+/// Corpo do evento `game-exited`, emitido quando o processo do jogo termina.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GameExited {
+    game_id: String,
+    /// Código de saída; `null` se o processo foi encerrado por sinal.
+    code: Option<i32>,
+}
+
+/// Inicia um jogo da última varredura em um processo separado.
+///
+/// Retorna assim que o processo inicia; o fim é avisado pelo evento
+/// `game-exited`.
+#[tauri::command]
+pub async fn launch_game(
+    game_id: String,
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> CommandResult<()> {
+    let game = lock(&state.games)
+        .get(&game_id)
+        .cloned()
+        .ok_or_else(|| "Jogo não encontrado; atualize a biblioteca.".to_owned())?;
+    let state = Arc::clone(&state);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        state
+            .runner
+            .launch(&game, move |code| {
+                let payload = GameExited { game_id, code };
+                if let Err(error) = app.emit("game-exited", payload) {
+                    eprintln!("não foi possível avisar o fim do jogo: {error}");
+                }
+            })
+            .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| format!("Falha interna: {error}"))?

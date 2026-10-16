@@ -1,0 +1,17 @@
+[package]
+name = "player"
+version = "0.1.0"
+description = "Janela nativa que executa um jogo: vídeo, áudio e teclado"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+sms = { path = "../sms" }
+winit = "0.30.13"
+softbuffer = "0.4.8"
+cpal = "0.18.2"
+
+[lints.rust]
+unsafe_code = "forbid"

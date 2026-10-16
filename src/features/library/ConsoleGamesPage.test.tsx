@@ -1,11 +1,14 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { type Mock, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Console } from "../../domain/console";
 import type { CoverImage, LibraryScan } from "../../domain/game";
 import {
   chooseLibraryDir,
   fetchGameCover,
+  type GameExited,
   getLibraryDir,
+  launchGame,
+  onGameExited,
   scanLibrary,
 } from "../../services/library";
 import { ConsoleGamesPage } from "./ConsoleGamesPage";
@@ -17,12 +20,16 @@ vi.mock("../../services/library", () => ({
   chooseLibraryDir: vi.fn(),
   scanLibrary: vi.fn(),
   fetchGameCover: vi.fn(),
+  launchGame: vi.fn(),
+  onGameExited: vi.fn(),
 }));
 
 const getDirMock = vi.mocked(getLibraryDir);
 const chooseMock = vi.mocked(chooseLibraryDir);
 const scanMock = vi.mocked(scanLibrary);
 const coverMock = vi.mocked(fetchGameCover);
+const launchMock = vi.mocked(launchGame);
+const exitedMock = vi.mocked(onGameExited);
 
 const GBA: Console = {
   id: "game-boy-advance",
@@ -32,6 +39,7 @@ const GBA: Console = {
   kind: "handheld",
   unitsSold: 81_510_000,
   supported: true,
+  playable: false,
 };
 
 const SCAN: LibraryScan = {
@@ -261,5 +269,162 @@ describe("ConsoleGamesPage", () => {
 
     expect(scanMock).toHaveBeenCalledTimes(2);
     expect(coverMock.mock.calls.filter(([id]) => id === "a.gba")).toHaveLength(1);
+  });
+
+  describe("console jogável", () => {
+    const SMS: Console = {
+      ...GBA,
+      id: "master-system",
+      name: "Master System",
+      releaseYear: 1985,
+      kind: "home",
+      playable: true,
+    };
+    const SMS_SCAN: LibraryScan = {
+      folder: "/Jogos",
+      games: [
+        {
+          id: "sonic.sms",
+          consoleId: "master-system",
+          title: "Sonic the Hedgehog (USA)",
+          fileName: "sonic.sms",
+          recognized: true,
+        },
+        {
+          id: "alex.sms",
+          consoleId: "master-system",
+          title: "Alex Kidd in Miracle World (USA)",
+          fileName: "alex.sms",
+          recognized: true,
+        },
+      ],
+    };
+
+    let emitExited: (event: GameExited) => void;
+    let unlisten: Mock<() => void>;
+
+    beforeEach(() => {
+      scanMock.mockResolvedValue(SMS_SCAN);
+      unlisten = vi.fn<() => void>();
+      exitedMock.mockImplementation(async (callback) => {
+        emitExited = callback;
+        return unlisten;
+      });
+      launchMock.mockResolvedValue(undefined);
+    });
+
+    async function renderPlayable() {
+      renderPage(SMS);
+      await screen.findByRole("list", { name: "Jogos" });
+      await waitFor(() => expect(exitedMock).toHaveBeenCalledTimes(1));
+    }
+
+    it("quadro é um botão que inicia o jogo", async () => {
+      await renderPlayable();
+
+      fireEvent.click(screen.getByRole("button", { name: "Jogar Sonic the Hedgehog (USA)" }));
+
+      expect(launchMock).toHaveBeenCalledWith("sonic.sms");
+      expect(launchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("jogo aberto mostra 'Em execução' e desativa os demais", async () => {
+      await renderPlayable();
+
+      const sonic = screen.getByRole("button", { name: "Jogar Sonic the Hedgehog (USA)" });
+      fireEvent.click(sonic);
+
+      expect(await within(sonic).findByText("Em execução")).toBeInTheDocument();
+      expect(sonic).toHaveAccessibleDescription("Em execução");
+      expect(sonic).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: "Jogar Alex Kidd in Miracle World (USA)" }),
+      ).toBeDisabled();
+    });
+
+    it("mostra 'Iniciando…' enquanto o núcleo não responde", async () => {
+      launchMock.mockReturnValue(deferred<void>().promise);
+      await renderPlayable();
+
+      const sonic = screen.getByRole("button", { name: "Jogar Sonic the Hedgehog (USA)" });
+      fireEvent.click(sonic);
+
+      expect(sonic).toHaveTextContent("Iniciando…");
+      expect(sonic).toHaveAttribute("aria-busy", "true");
+    });
+
+    it("game-exited devolve a página ao normal", async () => {
+      await renderPlayable();
+      const sonic = screen.getByRole("button", { name: "Jogar Sonic the Hedgehog (USA)" });
+      fireEvent.click(sonic);
+      await within(sonic).findByText("Em execução");
+
+      act(() => emitExited({ gameId: "sonic.sms", code: 0 }));
+
+      expect(screen.queryByText("Em execução")).toBeNull();
+      for (const tile of within(screen.getByRole("list", { name: "Jogos" })).getAllByRole(
+        "button",
+      )) {
+        expect(tile).toBeEnabled();
+      }
+    });
+
+    it("game-exited de outro jogo não altera o jogo aberto", async () => {
+      await renderPlayable();
+      const sonic = screen.getByRole("button", { name: "Jogar Sonic the Hedgehog (USA)" });
+      fireEvent.click(sonic);
+      await within(sonic).findByText("Em execução");
+
+      act(() => emitExited({ gameId: "alex.sms", code: null }));
+
+      expect(within(sonic).getByText("Em execução")).toBeInTheDocument();
+    });
+
+    it("jogo que fecha antes da resposta do núcleo não fica preso em execução", async () => {
+      const launch = deferred<void>();
+      launchMock.mockReturnValue(launch.promise);
+      await renderPlayable();
+      fireEvent.click(screen.getByRole("button", { name: "Jogar Sonic the Hedgehog (USA)" }));
+
+      act(() => emitExited({ gameId: "sonic.sms", code: 1 }));
+      await act(async () => launch.resolve());
+
+      expect(screen.queryByText("Em execução")).toBeNull();
+      expect(screen.queryByText("Iniciando…")).toBeNull();
+    });
+
+    it("mostra o erro ao iniciar e libera os quadros", async () => {
+      launchMock.mockRejectedValue("ROM inválida para o Master System.");
+      await renderPlayable();
+
+      fireEvent.click(screen.getByRole("button", { name: "Jogar Sonic the Hedgehog (USA)" }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "ROM inválida para o Master System.",
+      );
+      expect(screen.getByRole("button", { name: "Jogar Sonic the Hedgehog (USA)" })).toBeEnabled();
+    });
+
+    it("cancela a escuta de game-exited ao sair da página", async () => {
+      renderPage(SMS);
+      await screen.findByRole("list", { name: "Jogos" });
+      await waitFor(() => expect(exitedMock).toHaveBeenCalled());
+      // Deixa a promessa do `listen` resolver antes de desmontar.
+      await act(async () => {});
+      expect(unlisten).not.toHaveBeenCalled();
+
+      cleanup();
+
+      expect(unlisten).toHaveBeenCalledTimes(1);
+    });
+
+    it("console não jogável não tem quadros clicáveis", async () => {
+      renderPage({ ...SMS, playable: false });
+
+      const grade = await screen.findByRole("list", { name: "Jogos" });
+      expect(within(grade).queryAllByRole("button")).toHaveLength(0);
+      expect(within(grade).queryByRole("button", { name: /^Jogar / })).toBeNull();
+      expect(exitedMock).not.toHaveBeenCalled();
+    });
   });
 });

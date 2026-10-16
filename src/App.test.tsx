@@ -22,6 +22,7 @@ const CONSOLES: Console[] = [
     kind: "home",
     unitsSold: 102_490_000,
     supported: false,
+    playable: false,
   },
 ];
 

@@ -3,10 +3,11 @@ import { ArrowLeft, FolderOpen, RotateCw, TriangleAlert } from "lucide-react";
 import { Button } from "../../components/Button";
 import { IconButton } from "../../components/IconButton";
 import type { Console } from "../../domain/console";
-import type { LibraryScan } from "../../domain/game";
+import type { Game, LibraryScan } from "../../domain/game";
 import { ConsoleLogo } from "../catalog/ConsoleLogo";
 import { GameTile } from "./GameTile";
 import { useLibrary } from "./useLibrary";
+import { useRunningGame } from "./useRunningGame";
 import styles from "./ConsoleGamesPage.module.css";
 
 const SKELETON_TILES = 10;
@@ -122,6 +123,7 @@ function Games({ console, scan }: { console: Console; scan: LibraryScan }) {
       </div>
     );
   }
+  if (console.playable) return <PlayableGames games={games} />;
   return (
     <ul className={styles.grid} aria-label="Jogos">
       {games.map((game) => (
@@ -130,6 +132,39 @@ function Games({ console, scan }: { console: Console; scan: LibraryScan }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+/** Grade em que cada quadro abre o jogo; um jogo aberto por vez. */
+function PlayableGames({ games }: { games: readonly Game[] }) {
+  const running = useRunningGame();
+  const busy = running.gameId !== null;
+
+  return (
+    <>
+      {running.error && (
+        <p className={styles.inlineError} role="alert">
+          {running.error}
+        </p>
+      )}
+      <ul className={styles.grid} aria-label="Jogos">
+        {games.map((game) => {
+          const current = running.gameId === game.id;
+          return (
+            <li key={game.id}>
+              <GameTile
+                game={game}
+                play={{
+                  status: current ? (running.launching ? "launching" : "running") : "idle",
+                  disabled: busy && !current,
+                  onPlay: () => running.launch(game.id),
+                }}
+              />
+            </li>
+          );
+        })}
+      </ul>
+    </>
   );
 }
 

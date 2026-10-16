@@ -1,15 +1,35 @@
-import { useRef, useState } from "react";
-import { CircleHelp } from "lucide-react";
+import { useCallback, useId, useRef, useState } from "react";
+import { CircleHelp, LoaderCircle, Play } from "lucide-react";
 import type { Game } from "../../domain/game";
 import { useCover } from "./useCover";
 import styles from "./GameTile.module.css";
+
+/** Estado de execução do quadro, só em consoles jogáveis. */
+export interface GameTilePlay {
+  /** `launching` enquanto o jogo é iniciado; `running` com a janela aberta. */
+  status: "idle" | "launching" | "running";
+  /** Outro jogo está aberto: este não pode ser iniciado. */
+  disabled: boolean;
+  onPlay: () => void;
+}
+
+interface GameTileProps {
+  game: Game;
+  /** Presente quando o console é jogável: o quadro vira um botão "Jogar". */
+  play?: GameTilePlay;
+}
 
 /**
  * Quadro do jogo: só a capa; sem capa, o título. Enquanto a capa é buscada
  * e decodificada, mostra um placeholder animado no lugar.
  */
-export function GameTile({ game }: { game: Game }) {
-  const ref = useRef<HTMLDivElement>(null);
+export function GameTile({ game, play }: GameTileProps) {
+  const ref = useRef<HTMLElement | null>(null);
+  // Ref de callback estável: o quadro é <div> ou <button> conforme o console.
+  const setRef = useCallback((element: HTMLElement | null) => {
+    ref.current = element;
+  }, []);
+  const statusId = useId();
   const cover = useCover(game.id, ref);
   const image = cover.status === "ready" ? cover.cover : null;
   // Estado do <img> por `src`: uma nova capa recomeça como "carregando".
@@ -19,8 +39,8 @@ export function GameTile({ game }: { game: Game }) {
   const showImage = image !== null && imageStatus !== "failed";
   const loading = cover.status !== "ready" || (showImage && imageStatus === "loading");
 
-  return (
-    <div ref={ref} className={styles.tile} aria-busy={loading || undefined}>
+  const content = (
+    <>
       {loading && <div className={styles.placeholder} aria-hidden="true" />}
       {showImage && (
         <img
@@ -43,6 +63,47 @@ export function GameTile({ game }: { game: Game }) {
           Não reconhecido
         </span>
       )}
-    </div>
+      {play && play.status !== "idle" && <PlayStatus id={statusId} status={play.status} />}
+    </>
+  );
+
+  if (!play) {
+    return (
+      <div ref={setRef} className={styles.tile} aria-busy={loading || undefined}>
+        {content}
+      </div>
+    );
+  }
+
+  const active = play.status !== "idle";
+  return (
+    <button
+      ref={setRef}
+      type="button"
+      className={`${styles.tile} ${styles.playable}`}
+      aria-label={`Jogar ${game.title}`}
+      aria-describedby={active ? statusId : undefined}
+      aria-busy={loading || play.status === "launching" || undefined}
+      data-active={active || undefined}
+      disabled={active || play.disabled}
+      onClick={play.onPlay}
+    >
+      {content}
+    </button>
+  );
+}
+
+/** Selo de execução: ícone e texto, não só cor. */
+function PlayStatus({ id, status }: { id: string; status: "launching" | "running" }) {
+  const launching = status === "launching";
+  const Icon = launching ? LoaderCircle : Play;
+  return (
+    <span id={id} className={styles.playStatus}>
+      <Icon
+        className={launching ? `${styles.badgeIcon} ${styles.spinner}` : styles.badgeIcon}
+        aria-hidden="true"
+      />
+      {launching ? "Iniciando…" : "Em execução"}
+    </span>
   );
 }

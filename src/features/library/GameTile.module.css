@@ -108,3 +108,61 @@
   width: var(--icon-sm);
   height: var(--icon-sm);
 }
+
+/* Quadro jogável: mesmo foco (global) e hover dos quadros de console. */
+.playable {
+  width: 100%;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out);
+}
+
+.playable:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-raised);
+}
+
+/* Jogo aberto: destacado, não esmaecido como os demais. */
+.playable[data-active] {
+  border-color: var(--color-primary);
+  cursor: default;
+}
+
+.playable:disabled:not([data-active]) {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.playStatus {
+  position: absolute;
+  inset: var(--space-2) var(--space-2) auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+}
+
+.spinner {
+  animation: spin var(--duration-spin) linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}

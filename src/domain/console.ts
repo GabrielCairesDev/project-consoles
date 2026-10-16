@@ -11,6 +11,8 @@ export interface Console {
   unitsSold: number;
   /** O app reconhece ROMs deste console. */
   supported: boolean;
+  /** O app executa jogos deste console em uma janela nativa. */
+  playable: boolean;
 }
 
 export interface DecadeGroup {

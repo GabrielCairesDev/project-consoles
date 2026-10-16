@@ -19,6 +19,7 @@ const CONSOLES: Console[] = [
     kind: "home",
     unitsSold: 13_000_000,
     supported: true,
+    playable: false,
   },
   {
     id: "game-boy",
@@ -28,6 +29,7 @@ const CONSOLES: Console[] = [
     kind: "handheld",
     unitsSold: 118_690_000,
     supported: true,
+    playable: false,
   },
   {
     id: "playstation-2",
@@ -37,6 +39,7 @@ const CONSOLES: Console[] = [
     kind: "home",
     unitsSold: 160_000_000,
     supported: false,
+    playable: false,
   },
 ];
 
