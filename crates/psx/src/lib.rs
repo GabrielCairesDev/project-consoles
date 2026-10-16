@@ -7,12 +7,14 @@
 //! proprietário e não vem junto).
 //!
 //! Estado atual: CPU, GTE, memória, interrupções, timers, DMA, a GPU, o
-//! controle digital e o memory card na porta 1. CD-ROM, SPU e MDEC ainda
-//! são só registradores.
+//! controle digital, o memory card na porta 1 e o CD-ROM (leitura de
+//! dados de imagens `.cue`/`.bin`). SPU e MDEC ainda são só
+//! registradores, e o som dos discos não toca.
 
 mod bus;
 mod cdrom;
 mod cpu;
+mod disc;
 mod dma;
 mod gpu;
 mod gte;
@@ -23,6 +25,7 @@ mod timers;
 
 use bus::{BIOS_SIZE, Bus, RAM_SIZE};
 use cpu::Cpu;
+pub use disc::{Disc, DiscError};
 pub use sio::{Buttons, MEMORY_CARD_SIZE, MemoryCardError};
 
 /// Clock da CPU (Hz): 44100 × 768.
@@ -192,6 +195,11 @@ impl Console {
             self.cpu.set_register(30, stack);
         }
         self.cpu.jump_to(exe.pc);
+    }
+
+    /// Põe o disco no drive. Com um disco, o BIOS dá a partida no jogo.
+    pub fn insert_disc(&mut self, disc: Disc) {
+        self.bus.cdrom.insert_disc(disc);
     }
 
     /// Botões apertados no controle da porta 1.

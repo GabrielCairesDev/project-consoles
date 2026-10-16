@@ -91,7 +91,7 @@ pub(crate) struct Bus {
     dma: Dma,
     timers: Timers,
     pub(crate) gpu: Gpu,
-    cdrom: Cdrom,
+    pub(crate) cdrom: Cdrom,
     spu: Spu,
     pub(crate) sio: Sio,
 }
@@ -254,7 +254,13 @@ impl Bus {
                 self.timers.read(offset - 0x100)
             }
             // Registradores de 8 bits: leituras maiores repetem o byte.
+            // A fila de dados também é lida em 16 bits.
+            0x802 if width == 2 => {
+                self.sync_cdrom();
+                u32::from(self.cdrom.read(2)) | u32::from(self.cdrom.read(2)) << 8
+            }
             0x800..=0x803 => {
+                self.sync_cdrom();
                 (u32::from(self.cdrom.read(offset & 3)) * 0x0101_0101) >> (32 - 8 * width as u32)
             }
             0x810..=0x813 => self.gpu.read(),
@@ -304,9 +310,13 @@ impl Bus {
                 self.reschedule();
             }
             0x800..=0x803 => {
+                self.sync_cdrom();
                 for i in 0..width as u32 {
-                    self.cdrom.write((offset + i) & 3, (value >> (8 * i)) as u8);
+                    self.cdrom
+                        .write((offset + i) & 3, (value >> (8 * i)) as u8, self.now);
                 }
+                self.raise_cdrom_irq();
+                self.reschedule();
             }
             0x810..=0x813 => {
                 self.gpu.gp0(value);
@@ -447,6 +457,18 @@ impl Bus {
         let irqs = self.timers.sync(now, self.gpu.dot_divider());
         Self::raise_timer_irqs(&mut self.irq, irqs);
         self.sync_sio();
+        self.sync_cdrom();
+    }
+
+    fn sync_cdrom(&mut self) {
+        self.cdrom.sync(self.now);
+        self.raise_cdrom_irq();
+    }
+
+    fn raise_cdrom_irq(&mut self) {
+        if self.cdrom.take_irq() {
+            self.irq.request(Irq::Cdrom);
+        }
     }
 
     fn sync_sio(&mut self) {
@@ -460,7 +482,10 @@ impl Bus {
         if let Some(cycles) = self.timers.cycles_to_next_irq(self.gpu.dot_divider()) {
             next = next.min(self.now + cycles);
         }
-        if let Some(at) = self.sio.next_event() {
+        for at in [self.sio.next_event(), self.cdrom.next_event()]
+            .into_iter()
+            .flatten()
+        {
             next = next.min(at);
         }
         self.next_event = next;

@@ -6,7 +6,8 @@
 //! ```
 //!
 //! `PSX_TESTS_DIR` deve conter `bios/SCPH1001.BIN` e o `tests.zip` do
-//! ps1-tests extraído em `ps1-tests/`.
+//! ps1-tests extraído em `ps1-tests/`. `PSX_DISC` aponta para o `.cue` de
+//! um jogo seu, usado só pelo teste de partida do disco.
 //!
 //! Os programas escrevem o resultado pelo putchar do BIOS: uma linha
 //! "pass - …" ou "fail - …" por caso.
@@ -247,4 +248,21 @@ fn gte_fuzz_matches_hardware_log() {
     let first_diff = got.lines().zip(reference.lines()).position(|(a, b)| a != b);
     assert_eq!(first_diff, None, "primeira linha diferente");
     assert_eq!(got.lines().count(), reference.lines().count());
+}
+
+#[test]
+#[ignore = "precisa do BIOS (PSX_TESTS_DIR) e de um jogo (PSX_DISC)"]
+fn bios_boots_the_game_from_disc() {
+    let (Some(dir), Some(disc)) = (tests_dir(), std::env::var_os("PSX_DISC")) else {
+        panic!("defina PSX_TESTS_DIR e PSX_DISC");
+    };
+    let mut console = console(&dir);
+    console.insert_disc(psx::Disc::open(Path::new(&disc)).expect("imagem válida"));
+    for _ in 0..900 {
+        console.run_frame();
+    }
+    // O BIOS leu o SYSTEM.CNF e carregou o executável do jogo.
+    let out = tty(&console);
+    assert!(out.contains("BOOT ="), "{out}");
+    assert!(out.contains("EXEC:PC0("), "{out}");
 }

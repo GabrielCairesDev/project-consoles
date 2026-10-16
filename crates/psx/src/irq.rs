@@ -1,11 +1,12 @@
 //! Controlador de interrupções (I_STAT e I_MASK, em 0x1F801070).
 
-/// Fontes de interrupção (bits de I_STAT). As do CD-ROM (2), da SIO (8)
-/// e do SPU (9) entram com esses dispositivos.
+/// Fontes de interrupção (bits de I_STAT). As da SIO (8) e do SPU (9)
+/// entram com esses dispositivos.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Irq {
     Vblank = 0,
     Gpu = 1,
+    Cdrom = 2,
     Dma = 3,
     Timer0 = 4,
     Timer1 = 5,

@@ -1,8 +1,8 @@
-//! Roda o BIOS (e, opcionalmente, um PS-EXE no lugar do shell) e mostra o
-//! texto que ele escreve.
+//! Roda o BIOS (e, opcionalmente, um PS-EXE no lugar do shell ou um
+//! disco `.cue`/`.bin`) e mostra o texto que ele escreve.
 //!
 //! ```text
-//! cargo run -p psx --release --example psx_tty -- <bios> [programa.exe] [quadros]
+//! cargo run -p psx --release --example psx_tty -- <bios> [programa.exe | jogo.cue] [quadros]
 //! ```
 
 use std::process::ExitCode;
@@ -10,7 +10,7 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(bios_path) = args.first() else {
-        eprintln!("uso: psx_tty <bios> [programa.exe] [quadros]");
+        eprintln!("uso: psx_tty <bios> [programa.exe | jogo.cue] [quadros]");
         return ExitCode::FAILURE;
     };
     let bios = match std::fs::read(bios_path) {
@@ -31,6 +31,14 @@ fn main() -> ExitCode {
     for arg in &args[1..] {
         if let Ok(n) = arg.parse() {
             frames = n;
+        } else if arg.ends_with(".cue") || arg.ends_with(".bin") {
+            match psx::Disc::open(std::path::Path::new(arg)) {
+                Ok(disc) => console.insert_disc(disc),
+                Err(e) => {
+                    eprintln!("{arg}: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
         } else {
             match std::fs::read(arg)
                 .map_err(|e| e.to_string())

@@ -1,8 +1,8 @@
-//! Roda o BIOS (e, opcionalmente, um PS-EXE) e salva o último quadro e a
-//! VRAM inteira em PNG.
+//! Roda o BIOS (e, opcionalmente, um PS-EXE ou um disco `.cue`/`.bin`) e
+//! salva o último quadro e a VRAM inteira em PNG.
 //!
 //! ```text
-//! cargo run -p psx --release --example psx_frame -- <bios> [programa.exe] <quadros> <saida>
+//! cargo run -p psx --release --example psx_frame -- <bios> [programa.exe | jogo.cue] <quadros> <saida>
 //! ```
 //!
 //! Gera `<saida>.png` (o quadro mostrado) e `<saida>-vram.png` (1024×512).
@@ -22,16 +22,22 @@ fn save_png(path: &str, width: usize, height: usize, rgb: &[u8]) -> Result<(), S
 
 fn run(args: &[String]) -> Result<(), String> {
     let [bios_path, rest @ ..] = args else {
-        return Err("uso: psx_frame <bios> [programa.exe] <quadros> <saida>".into());
+        return Err("uso: psx_frame <bios> [programa.exe | jogo.cue] <quadros> <saida>".into());
     };
     let bios = std::fs::read(bios_path).map_err(|e| format!("{bios_path}: {e}"))?;
     let mut console = psx::Console::new(&bios).map_err(|e| e.to_string())?;
     let (exe, frames, out) = match rest {
         [exe, frames, out] => (Some(exe), frames, out),
         [frames, out] => (None, frames, out),
-        _ => return Err("uso: psx_frame <bios> [programa.exe] <quadros> <saida>".into()),
+        _ => {
+            return Err("uso: psx_frame <bios> [programa.exe | jogo.cue] <quadros> <saida>".into());
+        }
     };
-    if let Some(exe) = exe {
+    if let Some(disc) = exe.filter(|p| p.ends_with(".cue") || p.ends_with(".bin")) {
+        let disc =
+            psx::Disc::open(std::path::Path::new(disc)).map_err(|e| format!("{disc}: {e}"))?;
+        console.insert_disc(disc);
+    } else if let Some(exe) = exe {
         let bytes = std::fs::read(exe).map_err(|e| format!("{exe}: {e}"))?;
         console.load_exe(&bytes).map_err(|e| e.to_string())?;
     }
