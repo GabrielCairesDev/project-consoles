@@ -4,14 +4,14 @@
 //! GB_TESTS_DIR=~/gb-tests cargo test -p gameboy --release --test test_roms -- --ignored --nocapture
 //! ```
 //!
-//! `GB_TESTS_DIR` deve conter `blargg/gb-test-roms-master` e
-//! `mooneye/mts-*`. As duas suítes informam o resultado pela serial:
+//! `GB_TESTS_DIR` deve conter `blargg/gb-test-roms-master`, `mooneye/mts-*`,
+//! `dmg-acid2.gb` e a imagem de referência `dmg-acid2-reference.png`. As duas suítes informam o resultado pela serial:
 //! Blargg escreve "Passed"/"Failed" e Mooneye envia 3, 5, 8, 13, 21, 34
 //! quando passa.
 
 use std::path::{Path, PathBuf};
 
-use gameboy::Console;
+use gameboy::{Console, SCREEN_HEIGHT, SCREEN_WIDTH};
 
 /// Testes que ainda não passam, com o motivo. Qualquer outro que falhe, ou
 /// um destes que passe, faz o teste falhar (para a lista não ficar velha).
@@ -21,6 +21,19 @@ const KNOWN_FAILURES: &[(&str, &str)] = &[
         "a interrupção chega uma volta depois (C = D8, esperado D9): depende da fase \
          dentro do M-ciclo entre escritas no DIV e no TAC, que o modelo por M-ciclo \
          não representa sem quebrar os outros testes do timer",
+    ),
+    (
+        "ppu/lcdon_timing-GS.gb",
+        "STAT logo depois de ligar o LCD: a 11ª leitura mostra a coincidência \
+         LY=LYC um ponto além do hardware",
+    ),
+    (
+        "ppu/lcdon_write_timing-GS.gb",
+        "acesso à OAM/VRAM ponto a ponto logo depois de ligar o LCD",
+    ),
+    (
+        "ppu/stat_lyc_onoff.gb",
+        "flag de coincidência LY=LYC ao ligar/desligar o LCD",
     ),
     (
         "boot_hwio-dmgABCmgb.gb",
@@ -140,6 +153,7 @@ fn public_test_roms() {
         "acceptance/instr",
         "acceptance/interrupts",
         "acceptance/oam_dma",
+        "acceptance/ppu",
         "acceptance/timer",
         "emulator-only/mbc1",
         "emulator-only/mbc2",
@@ -172,4 +186,47 @@ fn public_test_roms() {
     }
     println!("{passed}/{} passaram", cases.len());
     assert!(unexpected.is_empty(), "\n{}", unexpected.join("\n"));
+}
+
+/// Tom de cinza (0 = branco … 3 = preto) de um pixel `0x00RRGGBB`.
+fn shade_index(pixel: u32) -> u8 {
+    let level = (pixel & 0xFF) as u8;
+    3 - level / 64
+}
+
+#[test]
+#[ignore = "precisa das ROMs de teste em GB_TESTS_DIR"]
+fn dmg_acid2_matches_reference() {
+    let base = PathBuf::from(std::env::var_os("GB_TESTS_DIR").expect("defina GB_TESTS_DIR"));
+    let rom = std::fs::read(base.join("dmg-acid2.gb")).expect("dmg-acid2.gb");
+    let mut console = Console::new(rom, 44_100).expect("ROM válida");
+    for _ in 0..60 {
+        console.run_frame();
+    }
+
+    let file = std::fs::File::open(base.join("dmg-acid2-reference.png")).expect("referência");
+    let mut decoder = png::Decoder::new(std::io::BufReader::new(file));
+    decoder.set_transformations(png::Transformations::EXPAND);
+    let mut reader = decoder.read_info().expect("PNG válido");
+    let mut pixels = vec![0; reader.output_buffer_size().expect("tamanho")];
+    let info = reader.next_frame(&mut pixels).expect("quadro do PNG");
+    assert_eq!(
+        (info.width as usize, info.height as usize),
+        (SCREEN_WIDTH, SCREEN_HEIGHT)
+    );
+    let channels = info.line_size / info.width as usize;
+
+    let mut differences = Vec::new();
+    for (i, &pixel) in console.framebuffer().iter().enumerate() {
+        let expected = 3 - pixels[i * channels] / 64;
+        if shade_index(pixel) != expected {
+            differences.push((i % SCREEN_WIDTH, i / SCREEN_WIDTH));
+        }
+    }
+    assert!(
+        differences.is_empty(),
+        "{} pixels diferentes, os primeiros: {:?}",
+        differences.len(),
+        &differences[..differences.len().min(10)]
+    );
 }
