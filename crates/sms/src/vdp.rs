@@ -5,6 +5,8 @@
 //! registradores feitas por interrupções de linha (efeitos raster) valham a
 //! partir da linha seguinte, como no hardware.
 
+use crate::state::{Reader, StateError, Writer};
+
 pub const WIDTH: usize = 256;
 pub const HEIGHT: usize = 192;
 /// Linhas por quadro em NTSC.
@@ -309,6 +311,52 @@ impl Vdp {
         (0..4).fold(0, |acc, plane| {
             acc | (((self.vram[addr + plane] >> bit) & 1) << plane)
         })
+    }
+}
+
+impl Vdp {
+    pub(crate) fn save_state(&self, w: &mut Writer) {
+        w.slice(self.vram.as_slice());
+        w.slice(&self.cram);
+        w.slice(&self.regs);
+        w.u16(self.address);
+        w.u8(self.code);
+        w.bool(self.latch.is_some());
+        w.u8(self.latch.unwrap_or(0));
+        w.u8(self.read_buffer);
+        w.u8(self.status);
+        w.bool(self.line_irq_pending);
+        w.u8(self.line_counter);
+        w.u16(self.line);
+        w.u8(self.vscroll);
+    }
+
+    /// O framebuffer não é salvo: o próximo quadro o redesenha por inteiro.
+    pub(crate) fn load_state(&mut self, r: &mut Reader<'_>) -> Result<(), StateError> {
+        r.fill(self.vram.as_mut_slice())?;
+        r.fill(&mut self.cram)?;
+        r.fill(&mut self.regs)?;
+        self.address = r.u16()?;
+        if self.address > 0x3FFF {
+            return Err(StateError::Invalid("endereço do VDP"));
+        }
+        self.code = r.u8()?;
+        if self.code > 3 {
+            return Err(StateError::Invalid("código do VDP"));
+        }
+        let latched = r.bool()?;
+        let low = r.u8()?;
+        self.latch = latched.then_some(low);
+        self.read_buffer = r.u8()?;
+        self.status = r.u8()?;
+        self.line_irq_pending = r.bool()?;
+        self.line_counter = r.u8()?;
+        self.line = r.u16()?;
+        if self.line >= LINES_PER_FRAME {
+            return Err(StateError::Invalid("linha do VDP"));
+        }
+        self.vscroll = r.u8()?;
+        Ok(())
     }
 }
 

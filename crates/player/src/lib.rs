@@ -14,7 +14,7 @@ mod video;
 
 use std::fmt;
 use std::num::NonZeroU32;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -44,6 +44,7 @@ pub enum PlayerError {
     EventLoop(winit::error::EventLoopError),
     Window(winit::error::OsError),
     Surface(softbuffer::SoftBufferError),
+    SaveState(std::io::Error),
 }
 
 impl fmt::Display for PlayerError {
@@ -54,6 +55,7 @@ impl fmt::Display for PlayerError {
             Self::EventLoop(e) => write!(f, "falha no loop de eventos: {e}"),
             Self::Window(e) => write!(f, "não foi possível abrir a janela: {e}"),
             Self::Surface(e) => write!(f, "falha ao desenhar na janela: {e}"),
+            Self::SaveState(e) => write!(f, "não foi possível salvar o progresso: {e}"),
         }
     }
 }
@@ -61,7 +63,14 @@ impl fmt::Display for PlayerError {
 impl std::error::Error for PlayerError {}
 
 /// Abre a janela e executa o jogo até o usuário fechá-la.
-pub fn run(rom_path: &Path, bindings: Bindings) -> Result<(), PlayerError> {
+///
+/// Com `state_path`, o jogo continua do estado salvo nesse arquivo (se
+/// existir e for desta ROM) e o estado é gravado nele ao fechar.
+pub fn run(
+    rom_path: &Path,
+    bindings: Bindings,
+    state_path: Option<PathBuf>,
+) -> Result<(), PlayerError> {
     let rom = std::fs::read(rom_path).map_err(PlayerError::ReadRom)?;
     let audio = match AudioOut::open() {
         Ok(audio) => Some(audio),
@@ -73,7 +82,10 @@ pub fn run(rom_path: &Path, bindings: Bindings) -> Result<(), PlayerError> {
     let sample_rate = audio
         .as_ref()
         .map_or(FALLBACK_SAMPLE_RATE, |a| a.sample_rate);
-    let console = Console::new(rom, sample_rate).map_err(PlayerError::Rom)?;
+    let mut console = Console::new(rom, sample_rate).map_err(PlayerError::Rom)?;
+    if let Some(path) = &state_path {
+        resume(&mut console, path);
+    }
     let title = rom_path.file_stem().map_or_else(
         || "Master System".to_owned(),
         |s| s.to_string_lossy().into_owned(),
@@ -91,6 +103,7 @@ pub fn run(rom_path: &Path, bindings: Bindings) -> Result<(), PlayerError> {
         window: None,
         bindings,
         joypad: Joypad::default(),
+        state_path,
         frame_duration: Duration::from_secs_f64(1.0 / sms::FRAME_RATE),
         next_frame: Instant::now(),
         error: None,
@@ -115,6 +128,7 @@ struct App {
     window: Option<GameWindow>,
     bindings: Bindings,
     joypad: Joypad,
+    state_path: Option<PathBuf>,
     frame_duration: Duration,
     next_frame: Instant,
     error: Option<PlayerError>,
@@ -195,7 +209,42 @@ impl App {
     }
 }
 
+/// Carrega o estado salvo, se houver. Estado inválido (outra versão,
+/// corrompido) não impede o jogo: começa do início e será sobrescrito.
+fn resume(console: &mut Console, path: &Path) {
+    match std::fs::read(path) {
+        Ok(bytes) => {
+            if let Err(e) = console.load_state(&bytes) {
+                eprintln!("estado salvo ignorado ({}): {e}", path.display());
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => eprintln!("não foi possível ler o estado salvo: {e}"),
+    }
+}
+
+/// Grava o estado de forma atômica (arquivo temporário + rename), para não
+/// deixar um estado pela metade se o processo morrer durante a escrita.
+fn write_state(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("state.tmp");
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path)
+}
+
 impl ApplicationHandler for App {
+    /// Fim do loop (janela fechada ou Esc): salva o progresso.
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        let Some(path) = &self.state_path else {
+            return;
+        };
+        if let Err(e) = write_state(path, &self.console.save_state()) {
+            self.error.get_or_insert(PlayerError::SaveState(e));
+        }
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -267,6 +316,36 @@ fn set_button(joypad: &mut Joypad, action: Action, pressed: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn state_file_round_trips_and_resumes() {
+        let dir = tempfile::tempdir().expect("pasta temporária");
+        let path = dir.path().join("saves/jogo.state");
+        let rom = vec![0x18, 0xFE]; // JR $
+        let mut console = Console::new(rom.clone(), 44_100).expect("ROM válida");
+        console.run_frame();
+        write_state(&path, &console.save_state()).expect("grava");
+        assert!(!path.with_extension("state.tmp").exists());
+
+        let mut resumed = Console::new(rom, 44_100).expect("ROM válida");
+        resume(&mut resumed, &path);
+        assert_eq!(resumed.save_state(), console.save_state());
+    }
+
+    #[test]
+    fn invalid_or_missing_state_starts_fresh() {
+        let dir = tempfile::tempdir().expect("pasta temporária");
+        let fresh = Console::new(vec![0x18, 0xFE], 44_100).expect("ROM válida");
+
+        let mut console = fresh.clone();
+        resume(&mut console, &dir.path().join("nao-existe.state"));
+        assert_eq!(console.save_state(), fresh.save_state());
+
+        let corrupted = dir.path().join("ruim.state");
+        std::fs::write(&corrupted, b"lixo").expect("escrita");
+        resume(&mut console, &corrupted);
+        assert_eq!(console.save_state(), fresh.save_state());
+    }
 
     #[test]
     fn actions_map_to_joypad() {

@@ -1,11 +1,22 @@
 import { useMemo, useState } from "react";
-import { ArrowLeft, FolderOpen, Gamepad2, RotateCw, TriangleAlert } from "lucide-react";
+import {
+  ArrowLeft,
+  FolderOpen,
+  Gamepad2,
+  RotateCcw,
+  RotateCw,
+  Settings,
+  TriangleAlert,
+} from "lucide-react";
 import { Button } from "../../components/Button";
+import { Dialog } from "../../components/Dialog";
 import { IconButton } from "../../components/IconButton";
 import type { Console } from "../../domain/console";
 import type { Game, LibraryScan } from "../../domain/game";
 import { ConsoleLogo } from "../catalog/ConsoleLogo";
 import { ControlsDialog } from "../controls/ControlsDialog";
+import { SettingsDialog } from "../settings/SettingsDialog";
+import { useConsoleSettings } from "../settings/useConsoleSettings";
 import { GameTile } from "./GameTile";
 import { useLibrary } from "./useLibrary";
 import { useRunningGame } from "./useRunningGame";
@@ -21,6 +32,10 @@ interface ConsoleGamesPageProps {
 /** Jogos de um console encontrados na pasta da biblioteca. */
 export function ConsoleGamesPage({ console, onBack }: ConsoleGamesPageProps) {
   const [controlsOpen, setControlsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const consoleSettings = useConsoleSettings(console.id, console.playable);
+  const resume =
+    consoleSettings.state.status === "ready" && consoleSettings.state.settings.resume;
 
   return (
     <main className={styles.page}>
@@ -37,6 +52,14 @@ export function ConsoleGamesPage({ console, onBack }: ConsoleGamesPageProps) {
               onClick={() => setControlsOpen(true)}
             />
           )}
+          {console.playable && (
+            <IconButton
+              icon={Settings}
+              label="Configurações"
+              aria-haspopup="dialog"
+              onClick={() => setSettingsOpen(true)}
+            />
+          )}
         </div>
         <div className={styles.consoleLogo}>
           <ConsoleLogo console={console} />
@@ -45,7 +68,7 @@ export function ConsoleGamesPage({ console, onBack }: ConsoleGamesPageProps) {
 
       <div className={styles.content}>
         {console.supported ? (
-          <Library console={console} />
+          <Library console={console} resume={resume} />
         ) : (
           <p className={styles.message}>
             Reconhecimento de jogos ainda não disponível para este console.
@@ -54,6 +77,13 @@ export function ConsoleGamesPage({ console, onBack }: ConsoleGamesPageProps) {
       </div>
 
       {controlsOpen && <ControlsDialog console={console} onClose={() => setControlsOpen(false)} />}
+      {settingsOpen && (
+        <SettingsDialog
+          console={console}
+          control={consoleSettings}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
     </main>
   );
 }
@@ -80,7 +110,7 @@ function LibraryActions() {
   );
 }
 
-function Library({ console }: { console: Console }) {
+function Library({ console, resume }: { console: Console; resume: boolean }) {
   const { state, choose, choosing, chooseError, refresh } = useLibrary();
 
   if (state.status === "loading") return <LoadingGrid />;
@@ -114,12 +144,20 @@ function Library({ console }: { console: Console }) {
           {chooseError}
         </p>
       )}
-      {state.status === "scanning" ? <LoadingGrid /> : <Games console={console} scan={state.scan} />}
+      {state.status === "scanning" ? <LoadingGrid /> : <Games console={console} scan={state.scan} resume={resume} />}
     </>
   );
 }
 
-function Games({ console, scan }: { console: Console; scan: LibraryScan }) {
+function Games({
+  console,
+  scan,
+  resume,
+}: {
+  console: Console;
+  scan: LibraryScan;
+  resume: boolean;
+}) {
   const games = useMemo(
     () => scan.games.filter((game) => game.consoleId === console.id),
     [scan, console.id],
@@ -136,7 +174,7 @@ function Games({ console, scan }: { console: Console; scan: LibraryScan }) {
       </div>
     );
   }
-  if (console.playable) return <PlayableGames games={games} />;
+  if (console.playable) return <PlayableGames games={games} resume={resume} />;
   return (
     <ul className={styles.grid} aria-label="Jogos">
       {games.map((game) => (
@@ -148,10 +186,15 @@ function Games({ console, scan }: { console: Console; scan: LibraryScan }) {
   );
 }
 
-/** Grade em que cada quadro abre o jogo; um jogo aberto por vez. */
-function PlayableGames({ games }: { games: readonly Game[] }) {
-  const running = useRunningGame();
+/**
+ * Grade em que cada quadro abre o jogo; um jogo aberto por vez. Com
+ * `resume`, jogos com progresso salvo mostram "Continuar" e podem ser
+ * recomeçados (após confirmação, porque o progresso é apagado).
+ */
+function PlayableGames({ games, resume }: { games: readonly Game[]; resume: boolean }) {
+  const running = useRunningGame(games);
   const busy = running.gameId !== null;
+  const [confirmRestart, setConfirmRestart] = useState<Game | null>(null);
 
   return (
     <>
@@ -170,13 +213,43 @@ function PlayableGames({ games }: { games: readonly Game[] }) {
                 play={{
                   status: current ? (running.launching ? "launching" : "running") : "idle",
                   disabled: busy && !current,
+                  hasSave: resume && running.hasSave(game),
                   onPlay: () => running.launch(game.id),
+                  onRestart: () => setConfirmRestart(game),
                 }}
               />
             </li>
           );
         })}
       </ul>
+
+      {confirmRestart && (
+        <Dialog
+          title="Recomeçar do início?"
+          onClose={() => setConfirmRestart(null)}
+          footer={
+            <>
+              <Button variant="ghost" onClick={() => setConfirmRestart(null)}>
+                Cancelar
+              </Button>
+              <Button
+                icon={RotateCcw}
+                onClick={() => {
+                  setConfirmRestart(null);
+                  running.restart(confirmRestart.id);
+                }}
+              >
+                Recomeçar
+              </Button>
+            </>
+          }
+        >
+          <p className={styles.dialogText}>
+            O progresso salvo de <strong>{confirmRestart.title}</strong> será apagado e o jogo vai
+            começar do início.
+          </p>
+        </Dialog>
+      )}
     </>
   );
 }

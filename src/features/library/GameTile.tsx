@@ -1,5 +1,6 @@
 import { useCallback, useId, useRef, useState } from "react";
-import { CircleHelp, LoaderCircle, Play } from "lucide-react";
+import { CircleHelp, History, LoaderCircle, Play, RotateCcw } from "lucide-react";
+import { Menu } from "../../components/Menu";
 import type { Game } from "../../domain/game";
 import { useCover } from "./useCover";
 import styles from "./GameTile.module.css";
@@ -10,7 +11,11 @@ export interface GameTilePlay {
   status: "idle" | "launching" | "running";
   /** Outro jogo está aberto: este não pode ser iniciado. */
   disabled: boolean;
+  /** Há progresso salvo: abrir continua de onde parou. */
+  hasSave: boolean;
   onPlay: () => void;
+  /** Pede para recomeçar do início (o chamador confirma e apaga o progresso). */
+  onRestart: () => void;
 }
 
 interface GameTileProps {
@@ -30,6 +35,7 @@ export function GameTile({ game, play }: GameTileProps) {
     ref.current = element;
   }, []);
   const statusId = useId();
+  const [menuOpen, setMenuOpen] = useState(false);
   const cover = useCover(game.id, ref);
   const image = cover.status === "ready" ? cover.cover : null;
   // Estado do <img> por `src`: uma nova capa recomeça como "carregando".
@@ -64,6 +70,12 @@ export function GameTile({ game, play }: GameTileProps) {
         </span>
       )}
       {play && play.status !== "idle" && <PlayStatus id={statusId} status={play.status} />}
+      {play?.hasSave && play.status === "idle" && (
+        <span className={styles.resumeBadge}>
+          <History className={styles.badgeIcon} aria-hidden="true" />
+          Continuar
+        </span>
+      )}
     </>
   );
 
@@ -76,20 +88,40 @@ export function GameTile({ game, play }: GameTileProps) {
   }
 
   const active = play.status !== "idle";
+  const showMenu = play.hasSave && !active && !play.disabled;
   return (
-    <button
-      ref={setRef}
-      type="button"
-      className={`${styles.tile} ${styles.playable}`}
-      aria-label={`Jogar ${game.title}`}
-      aria-describedby={active ? statusId : undefined}
-      aria-busy={loading || play.status === "launching" || undefined}
-      data-active={active || undefined}
-      disabled={active || play.disabled}
-      onClick={play.onPlay}
-    >
-      {content}
-    </button>
+    <div className={styles.slot}>
+      <button
+        ref={setRef}
+        type="button"
+        className={`${styles.tile} ${styles.playable}`}
+        aria-label={`${play.hasSave ? "Continuar" : "Jogar"} ${game.title}`}
+        aria-describedby={active ? statusId : undefined}
+        aria-busy={loading || play.status === "launching" || undefined}
+        data-active={active || undefined}
+        disabled={active || play.disabled}
+        onClick={play.onPlay}
+        onContextMenu={(event) => {
+          if (!showMenu) return;
+          event.preventDefault();
+          setMenuOpen(true);
+        }}
+      >
+        {content}
+      </button>
+      {showMenu && (
+        <Menu
+          className={styles.menu}
+          label={`Opções de ${game.title}`}
+          open={menuOpen}
+          onOpenChange={setMenuOpen}
+          items={[
+            { label: "Continuar", icon: Play, onSelect: play.onPlay },
+            { label: "Recomeçar do início", icon: RotateCcw, onSelect: play.onRestart, danger: true },
+          ]}
+        />
+      )}
+    </div>
   );
 }
 

@@ -4,6 +4,7 @@ import type { Console } from "../../domain/console";
 import type { CoverImage, LibraryScan } from "../../domain/game";
 import {
   chooseLibraryDir,
+  deleteSave,
   fetchGameCover,
   type GameExited,
   getLibraryDir,
@@ -11,10 +12,16 @@ import {
   onGameExited,
   scanLibrary,
 } from "../../services/library";
+import { getConsoleSettings } from "../../services/consoleSettings";
 import { getControls } from "../../services/controls";
 import { ConsoleGamesPage } from "./ConsoleGamesPage";
 import { LibraryProvider } from "./LibraryProvider";
 import { clearCoverCache } from "./useCover";
+
+vi.mock("../../services/consoleSettings", () => ({
+  getConsoleSettings: vi.fn(),
+  saveConsoleSettings: vi.fn(),
+}));
 
 vi.mock("../../services/controls", () => ({
   getControls: vi.fn(),
@@ -24,6 +31,7 @@ vi.mock("../../services/controls", () => ({
 vi.mock("../../services/library", () => ({
   getLibraryDir: vi.fn(),
   chooseLibraryDir: vi.fn(),
+  deleteSave: vi.fn(),
   scanLibrary: vi.fn(),
   fetchGameCover: vi.fn(),
   launchGame: vi.fn(),
@@ -57,6 +65,7 @@ const SCAN: LibraryScan = {
       title: "Advance Wars (USA)",
       fileName: "a.gba",
       recognized: true,
+      hasSave: false,
     },
     {
       id: "gba/b.zip",
@@ -64,6 +73,7 @@ const SCAN: LibraryScan = {
       title: "Golden Sun (USA)",
       fileName: "b.zip",
       recognized: true,
+      hasSave: false,
     },
     {
       id: "c.gba",
@@ -71,6 +81,7 @@ const SCAN: LibraryScan = {
       title: "caseiro",
       fileName: "c.gba",
       recognized: false,
+      hasSave: false,
     },
     {
       id: "smw.sfc",
@@ -78,6 +89,7 @@ const SCAN: LibraryScan = {
       title: "Super Mario World (USA)",
       fileName: "smw.sfc",
       recognized: true,
+      hasSave: false,
     },
   ],
 };
@@ -107,6 +119,7 @@ describe("ConsoleGamesPage", () => {
     clearCoverCache();
     vi.spyOn(console, "error").mockImplementation(() => {});
     getDirMock.mockResolvedValue("/Jogos");
+    vi.mocked(getConsoleSettings).mockResolvedValue({ resume: true });
     scanMock.mockResolvedValue(SCAN);
     coverMock.mockResolvedValue(null);
   });
@@ -116,6 +129,7 @@ describe("ConsoleGamesPage", () => {
 
     expect(screen.queryByRole("button", { name: "Trocar pasta" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Configurar controles" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Configurações" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Atualizar" })).toBeNull();
 
     expect(
@@ -296,6 +310,7 @@ describe("ConsoleGamesPage", () => {
           title: "Sonic the Hedgehog (USA)",
           fileName: "sonic.sms",
           recognized: true,
+          hasSave: false,
         },
         {
           id: "alex.sms",
@@ -303,6 +318,7 @@ describe("ConsoleGamesPage", () => {
           title: "Alex Kidd in Miracle World (USA)",
           fileName: "alex.sms",
           recognized: true,
+          hasSave: false,
         },
       ],
     };
@@ -333,6 +349,111 @@ describe("ConsoleGamesPage", () => {
 
       expect(launchMock).toHaveBeenCalledWith("sonic.sms");
       expect(launchMock).toHaveBeenCalledTimes(1);
+    });
+
+    describe("continuar de onde parou", () => {
+      const SAVED_SCAN: LibraryScan = {
+        ...SMS_SCAN,
+        games: SMS_SCAN.games.map((g) => (g.id === "sonic.sms" ? { ...g, hasSave: true } : g)),
+      };
+
+      beforeEach(() => {
+        scanMock.mockResolvedValue(SAVED_SCAN);
+        vi.mocked(deleteSave).mockResolvedValue(undefined);
+      });
+
+      it("jogo com progresso mostra Continuar e abre normalmente", async () => {
+        await renderPlayable();
+
+        const tile = screen.getByRole("button", { name: "Continuar Sonic the Hedgehog (USA)" });
+        expect(within(tile).getByText("Continuar")).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Jogar Alex Kidd in Miracle World (USA)" }))
+          .toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /^Opções de Alex/ })).toBeNull();
+
+        fireEvent.click(tile);
+        expect(launchMock).toHaveBeenCalledWith("sonic.sms");
+        expect(deleteSave).not.toHaveBeenCalled();
+      });
+
+      it("recomeçar pede confirmação, apaga o progresso e inicia", async () => {
+        await renderPlayable();
+
+        fireEvent.click(screen.getByRole("button", { name: "Opções de Sonic the Hedgehog (USA)" }));
+        fireEvent.click(screen.getByRole("menuitem", { name: "Recomeçar do início" }));
+
+        const dialog = screen.getByRole("dialog", { name: "Recomeçar do início?" });
+        expect(deleteSave).not.toHaveBeenCalled();
+        fireEvent.click(within(dialog).getByRole("button", { name: "Recomeçar" }));
+
+        expect(deleteSave).toHaveBeenCalledWith("sonic.sms");
+        await waitFor(() => expect(launchMock).toHaveBeenCalledWith("sonic.sms"));
+        expect(screen.queryByRole("dialog")).toBeNull();
+      });
+
+      it("cancelar a confirmação não apaga nada", async () => {
+        await renderPlayable();
+
+        fireEvent.click(screen.getByRole("button", { name: "Opções de Sonic the Hedgehog (USA)" }));
+        fireEvent.click(screen.getByRole("menuitem", { name: "Recomeçar do início" }));
+        fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+
+        expect(deleteSave).not.toHaveBeenCalled();
+        expect(launchMock).not.toHaveBeenCalled();
+      });
+
+      it("clique direito no quadro abre o menu", async () => {
+        await renderPlayable();
+
+        fireEvent.contextMenu(screen.getByRole("button", { name: "Continuar Sonic the Hedgehog (USA)" }));
+
+        expect(screen.getByRole("menu", { name: "Opções de Sonic the Hedgehog (USA)" }))
+          .toBeInTheDocument();
+      });
+
+      it("falha ao apagar o progresso é mostrada e o jogo não abre", async () => {
+        vi.mocked(deleteSave).mockRejectedValue("Feche o jogo em execução antes de recomeçar.");
+        await renderPlayable();
+
+        fireEvent.click(screen.getByRole("button", { name: "Opções de Sonic the Hedgehog (USA)" }));
+        fireEvent.click(screen.getByRole("menuitem", { name: "Recomeçar do início" }));
+        fireEvent.click(screen.getByRole("button", { name: "Recomeçar" }));
+
+        expect(await screen.findByRole("alert")).toHaveTextContent("Feche o jogo em execução");
+        expect(launchMock).not.toHaveBeenCalled();
+      });
+
+      it("ao fechar o jogo com progresso, o quadro passa a Continuar", async () => {
+        scanMock.mockResolvedValue(SMS_SCAN);
+        await renderPlayable();
+
+        fireEvent.click(screen.getByRole("button", { name: "Jogar Alex Kidd in Miracle World (USA)" }));
+        await waitFor(() => expect(launchMock).toHaveBeenCalled());
+        act(() => emitExited({ gameId: "alex.sms", code: 0, hasSave: true }));
+
+        expect(
+          await screen.findByRole("button", { name: "Continuar Alex Kidd in Miracle World (USA)" }),
+        ).toBeEnabled();
+      });
+
+      it("com a opção desligada, todo jogo começa do início", async () => {
+        vi.mocked(getConsoleSettings).mockResolvedValue({ resume: false });
+        await renderPlayable();
+
+        expect(screen.getByRole("button", { name: "Jogar Sonic the Hedgehog (USA)" }))
+          .toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /^Opções de/ })).toBeNull();
+        expect(screen.queryByText("Continuar")).toBeNull();
+      });
+    });
+
+    it("botão de configurações abre o diálogo com a opção de continuar", async () => {
+      await renderPlayable();
+
+      fireEvent.click(screen.getByRole("button", { name: "Configurações" }));
+
+      const dialog = screen.getByRole("dialog", { name: "Configurações · Master System" });
+      expect(within(dialog).getByRole("switch", { name: "Continuar de onde parou" })).toBeChecked();
     });
 
     it("botão de controles abre o diálogo e Esc devolve o foco", async () => {
@@ -382,7 +503,7 @@ describe("ConsoleGamesPage", () => {
       fireEvent.click(sonic);
       await within(sonic).findByText("Em execução");
 
-      act(() => emitExited({ gameId: "sonic.sms", code: 0 }));
+      act(() => emitExited({ gameId: "sonic.sms", code: 0, hasSave: false }));
 
       expect(screen.queryByText("Em execução")).toBeNull();
       for (const tile of within(screen.getByRole("list", { name: "Jogos" })).getAllByRole(
@@ -398,7 +519,7 @@ describe("ConsoleGamesPage", () => {
       fireEvent.click(sonic);
       await within(sonic).findByText("Em execução");
 
-      act(() => emitExited({ gameId: "alex.sms", code: null }));
+      act(() => emitExited({ gameId: "alex.sms", code: null, hasSave: false }));
 
       expect(within(sonic).getByText("Em execução")).toBeInTheDocument();
     });
@@ -409,7 +530,7 @@ describe("ConsoleGamesPage", () => {
       await renderPlayable();
       fireEvent.click(screen.getByRole("button", { name: "Jogar Sonic the Hedgehog (USA)" }));
 
-      act(() => emitExited({ gameId: "sonic.sms", code: 1 }));
+      act(() => emitExited({ gameId: "sonic.sms", code: 1, hasSave: false }));
       await act(async () => launch.resolve());
 
       expect(screen.queryByText("Em execução")).toBeNull();

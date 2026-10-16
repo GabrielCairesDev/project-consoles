@@ -4,6 +4,8 @@
 //! dispositivo de áudio pela média das amostras internas de cada período
 //! (filtro de caixa), o que já elimina o grosso do aliasing dos tons agudos.
 
+use crate::state::{Reader, StateError, Writer};
+
 /// Valor inicial do LFSR e bit de saída do ruído (16 bits no SMS).
 const LFSR_RESET: u16 = 0x8000;
 /// Volume máximo por canal; quatro canais somados ficam abaixo de 1.0.
@@ -159,6 +161,60 @@ impl Psg {
     /// Move as amostras geradas (mono, `f32` em 0.0..1.0) para `out`.
     pub fn drain(&mut self, out: &mut Vec<f32>) {
         out.append(&mut self.samples);
+    }
+}
+
+impl Psg {
+    pub(crate) fn save_state(&self, w: &mut Writer) {
+        for v in self.tone {
+            w.u16(v);
+        }
+        w.u8(self.noise);
+        w.slice(&self.volume);
+        for v in self.counter {
+            w.u16(v);
+        }
+        for v in self.output {
+            w.bool(v);
+        }
+        w.u16(self.lfsr);
+        w.u8(self.latched_channel as u8);
+        w.bool(self.latched_volume);
+        w.u32(self.cpu_cycles);
+    }
+
+    /// O estado do reamostrador não é salvo: recomeça do zero sem efeito
+    /// audível.
+    pub(crate) fn load_state(&mut self, r: &mut Reader<'_>) -> Result<(), StateError> {
+        for v in &mut self.tone {
+            *v = r.u16()? & 0x3FF;
+        }
+        self.noise = r.u8()? & 0x07;
+        r.fill(&mut self.volume)?;
+        if self.volume.iter().any(|&v| v > 0x0F) {
+            return Err(StateError::Invalid("volume do PSG"));
+        }
+        for v in &mut self.counter {
+            *v = r.u16()?;
+        }
+        for v in &mut self.output {
+            *v = r.bool()?;
+        }
+        self.lfsr = r.u16()?;
+        self.latched_channel = usize::from(r.u8()?);
+        if self.latched_channel > 3 {
+            return Err(StateError::Invalid("canal do PSG"));
+        }
+        self.latched_volume = r.bool()?;
+        self.cpu_cycles = r.u32()?;
+        if self.cpu_cycles >= self.clock_divider {
+            return Err(StateError::Invalid("ciclos do PSG"));
+        }
+        self.acc_sum = 0.0;
+        self.acc_count = 0;
+        self.phase = 0;
+        self.samples.clear();
+        Ok(())
     }
 }
 

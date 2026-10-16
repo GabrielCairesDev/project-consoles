@@ -46,6 +46,13 @@ export function launchGame(gameId: string): Promise<void> {
 export interface GameExited {
   gameId: string;
   code: number | null;
+  /** O jogo deixou progresso salvo para continuar. */
+  hasSave: boolean;
+}
+
+/** Apaga o progresso salvo do jogo, para recomeçar do início. */
+export function deleteSave(gameId: string): Promise<void> {
+  return invoke<void>("delete_save", { gameId });
 }
 
 /** Avisa quando a janela de um jogo fecha. Resolve com a função que cancela a escuta. */

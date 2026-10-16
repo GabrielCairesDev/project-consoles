@@ -2988,6 +2988,7 @@ dependencies = [
  "cpal",
  "sms",
  "softbuffer",
+ "tempfile",
  "winit",
 ]
 

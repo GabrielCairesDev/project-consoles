@@ -5,6 +5,7 @@ pub mod dat;
 pub mod identify;
 pub mod library;
 pub mod runtime;
+pub mod saves;
 pub mod settings;
 pub mod systems;
 
@@ -42,6 +43,9 @@ pub fn run() {
             commands::launch_game,
             commands::get_controls,
             commands::set_controls,
+            commands::delete_save,
+            commands::get_console_settings,
+            commands::set_console_settings,
         ])
         .run(tauri::generate_context!())
         .expect("falha ao iniciar a aplicação Tauri");

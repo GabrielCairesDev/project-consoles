@@ -10,6 +10,7 @@
 
 mod bus;
 mod psg;
+mod state;
 pub mod vdp;
 pub mod z80;
 
@@ -19,6 +20,7 @@ use bus::{BANK_SIZE, SmsBus};
 use psg::Psg;
 use z80::Z80;
 
+pub use state::StateError;
 pub use vdp::{HEIGHT as SCREEN_HEIGHT, WIDTH as SCREEN_WIDTH};
 
 /// Clock da CPU no NTSC (Hz).
@@ -71,12 +73,15 @@ pub struct Console {
     bus: SmsBus,
     /// Ciclos executados além do fim da linha anterior.
     overshoot: u32,
+    /// Identifica a ROM nos estados salvos.
+    rom_hash: u64,
 }
 
 impl Console {
     /// Liga o console com a ROM e gera áudio na taxa `sample_rate` (Hz).
     pub fn new(rom: Vec<u8>, sample_rate: u32) -> Result<Self, RomError> {
         let rom = normalize_rom(rom)?;
+        let rom_hash = state::rom_hash(&rom);
         let mut cpu = Z80::new();
         // Sem BIOS: deixa a pilha onde a BIOS deixaria.
         cpu.sp = 0xDFF0;
@@ -84,6 +89,7 @@ impl Console {
             cpu,
             bus: SmsBus::new(rom, Psg::new(CPU_CLOCK, sample_rate)),
             overshoot: 0,
+            rom_hash,
         })
     }
 
@@ -115,6 +121,47 @@ impl Console {
 
     pub fn set_input(&mut self, joypad: Joypad) {
         self.bus.joypad = joypad;
+    }
+
+    /// Estado completo da máquina, para continuar o jogo depois. Deve ser
+    /// chamado entre quadros (depois de [`Console::run_frame`]).
+    pub fn save_state(&self) -> Vec<u8> {
+        let mut w = state::Writer::default();
+        w.slice(state::MAGIC);
+        w.u16(state::VERSION);
+        w.u64(self.rom_hash);
+        self.cpu.save_state(&mut w);
+        self.bus.save_state(&mut w);
+        w.u32(self.overshoot);
+        w.bytes
+    }
+
+    /// Restaura um estado de [`Console::save_state`] feito com a mesma ROM.
+    /// Em caso de erro, o console fica exatamente como estava.
+    pub fn load_state(&mut self, bytes: &[u8]) -> Result<(), StateError> {
+        let mut r = state::Reader::new(bytes);
+        let mut magic = [0; 8];
+        r.fill(&mut magic).map_err(|_| StateError::NotAState)?;
+        if &magic != state::MAGIC {
+            return Err(StateError::NotAState);
+        }
+        let version = r.u16()?;
+        if version != state::VERSION {
+            return Err(StateError::UnsupportedVersion(version));
+        }
+        if r.u64()? != self.rom_hash {
+            return Err(StateError::WrongRom);
+        }
+        let mut next = self.clone();
+        next.cpu.load_state(&mut r)?;
+        next.bus.load_state(&mut r)?;
+        next.overshoot = r.u32()?;
+        if next.overshoot >= CYCLES_PER_LINE {
+            return Err(StateError::Invalid("ciclos da linha"));
+        }
+        r.finish()?;
+        *self = next;
+        Ok(())
     }
 
     /// Botão Pause do console (gera uma NMI).
@@ -236,6 +283,88 @@ mod tests {
         console.run_frame();
         assert_eq!(console.cpu.a, 0x77);
         assert_eq!(console.cpu.pc, 0);
+    }
+
+    /// Contador em RAM incrementado a cada VBlank, desenhado como cor de
+    /// fundo: qualquer divergência após carregar o estado muda o quadro.
+    fn counting_rom() -> Vec<u8> {
+        // 0000: IM 1 ; liga tela + IE0 ; EI ; HALT ; JR -3
+        // 0038: LD HL,C000h ; INC (HL) ; LD A,(HL) ; OUT (BFh) CRAM 0 ; OUT (BEh),A
+        //       IN A,(BFh) ; EI ; RETI
+        let mut program = vec![
+            0xED, 0x56, 0x3E, 0x60, 0xD3, 0xBF, 0x3E, 0x81, 0xD3, 0xBF, 0xFB, 0x76, 0x18, 0xFD,
+        ];
+        program.resize(0x38, 0);
+        program.extend([
+            0x21, 0x00, 0xC0, 0x34, 0x7E, 0xF5, 0x3E, 0x00, 0xD3, 0xBF, 0x3E, 0xC0, 0xD3, 0xBF,
+            0xF1, 0xD3, 0xBE, 0xDB, 0xBF, 0xFB, 0xED, 0x4D,
+        ]);
+        rom_with(&program)
+    }
+
+    #[test]
+    fn save_and_load_state_resume_deterministically() {
+        let mut original = Console::new(counting_rom(), 44_100).unwrap();
+        for _ in 0..10 {
+            original.run_frame();
+        }
+        let saved = original.save_state();
+        for _ in 0..5 {
+            original.run_frame();
+        }
+
+        let mut resumed = Console::new(counting_rom(), 44_100).unwrap();
+        resumed.load_state(&saved).unwrap();
+        for _ in 0..5 {
+            resumed.run_frame();
+        }
+        assert_eq!(resumed.framebuffer(), original.framebuffer());
+        assert_eq!(resumed.save_state(), original.save_state());
+        assert_eq!(z80::Bus::read(&mut resumed.bus, 0xC000), 15);
+    }
+
+    #[test]
+    fn load_state_rejects_other_rom_and_corruption() {
+        let mut console = Console::new(counting_rom(), 44_100).unwrap();
+        console.run_frame();
+        let saved = console.save_state();
+
+        let mut other = Console::new(rom_with(&[0x18, 0xFE]), 44_100).unwrap();
+        assert_eq!(other.load_state(&saved), Err(StateError::WrongRom));
+
+        assert_eq!(console.load_state(b"lixo"), Err(StateError::NotAState));
+        assert_eq!(
+            console.load_state(&saved[..saved.len() - 1]),
+            Err(StateError::Truncated)
+        );
+        let mut extra = saved.clone();
+        extra.push(0);
+        assert_eq!(console.load_state(&extra), Err(StateError::TrailingData));
+
+        let mut future = saved.clone();
+        future[8] = 99;
+        assert_eq!(
+            console.load_state(&future),
+            Err(StateError::UnsupportedVersion(99))
+        );
+    }
+
+    #[test]
+    fn failed_load_leaves_console_untouched() {
+        let mut console = Console::new(counting_rom(), 44_100).unwrap();
+        for _ in 0..3 {
+            console.run_frame();
+        }
+        let before = console.save_state();
+        // Corrompe o modo de interrupção (logo após os 8+9*2+4 bytes da CPU).
+        let mut corrupted = before.clone();
+        let im_offset = 8 + 2 + 8 + 8 + 9 * 2 + 2;
+        corrupted[im_offset] = 7;
+        assert_eq!(
+            console.load_state(&corrupted),
+            Err(StateError::Invalid("modo de interrupção"))
+        );
+        assert_eq!(console.save_state(), before);
     }
 
     #[test]

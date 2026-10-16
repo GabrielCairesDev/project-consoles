@@ -15,6 +15,7 @@ const GAME: Game = {
   title: "Advance Wars (USA)",
   fileName: "a.gba",
   recognized: true,
+  hasSave: false,
 };
 
 const BOXART: CoverImage = { src: "asset://capa.png", kind: "boxart" };

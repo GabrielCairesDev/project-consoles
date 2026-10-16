@@ -476,6 +476,91 @@ impl Z80 {
     }
 }
 
+impl Z80 {
+    pub(crate) fn save_state(&self, w: &mut crate::state::Writer) {
+        for v in [
+            self.a, self.f, self.b, self.c, self.d, self.e, self.h, self.l,
+        ] {
+            w.u8(v);
+        }
+        for v in [
+            self.af_alt,
+            self.bc_alt,
+            self.de_alt,
+            self.hl_alt,
+            self.ix,
+            self.iy,
+            self.sp,
+            self.pc,
+            self.wz,
+        ] {
+            w.u16(v);
+        }
+        w.u8(self.i);
+        w.u8(self.r);
+        w.u8(self.im);
+        w.u8(self.q);
+        for v in [
+            self.iff1,
+            self.iff2,
+            self.halted,
+            self.ei_delay,
+            self.nmi_pending,
+        ] {
+            w.bool(v);
+        }
+    }
+
+    pub(crate) fn load_state(
+        &mut self,
+        r: &mut crate::state::Reader<'_>,
+    ) -> Result<(), crate::state::StateError> {
+        for reg in [
+            &mut self.a,
+            &mut self.f,
+            &mut self.b,
+            &mut self.c,
+            &mut self.d,
+            &mut self.e,
+            &mut self.h,
+            &mut self.l,
+        ] {
+            *reg = r.u8()?;
+        }
+        for reg in [
+            &mut self.af_alt,
+            &mut self.bc_alt,
+            &mut self.de_alt,
+            &mut self.hl_alt,
+            &mut self.ix,
+            &mut self.iy,
+            &mut self.sp,
+            &mut self.pc,
+            &mut self.wz,
+        ] {
+            *reg = r.u16()?;
+        }
+        self.i = r.u8()?;
+        self.r = r.u8()?;
+        self.im = r.u8()?;
+        if self.im > 2 {
+            return Err(crate::state::StateError::Invalid("modo de interrupção"));
+        }
+        self.q = r.u8()?;
+        for flag in [
+            &mut self.iff1,
+            &mut self.iff2,
+            &mut self.halted,
+            &mut self.ei_delay,
+            &mut self.nmi_pending,
+        ] {
+            *flag = r.bool()?;
+        }
+        self.flags_written = false;
+        Ok(())
+    }
+}
+
 /// S, Z e bits 3/5 de um resultado de 8 bits.
 fn sz_xy(r: u8) -> u8 {
     let mut f = r & (S | X | Y);

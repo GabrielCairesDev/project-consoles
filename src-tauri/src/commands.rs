@@ -12,8 +12,9 @@ use tauri::{AppHandle, Emitter, State};
 use crate::catalog::{self, Console};
 use crate::covers::{Cover, CoverStore, LibretroThumbnails};
 use crate::library::{self, FingerprintCache, Game};
-use crate::runtime::{self, Runner};
-use crate::settings::Settings;
+use crate::runtime::{self, LaunchOptions, Runner};
+use crate::saves::SaveStore;
+use crate::settings::{ConsoleSettings, Settings};
 use crate::systems;
 
 /// Estado compartilhado entre os comandos.
@@ -28,6 +29,7 @@ pub struct AppState {
     covers: CoverStore,
     boxarts: LibretroThumbnails,
     runner: Runner,
+    saves: SaveStore,
 }
 
 impl AppState {
@@ -51,6 +53,7 @@ impl AppState {
             covers: CoverStore::new(cache_dir.join("covers")),
             boxarts: LibretroThumbnails::default(),
             runner: Runner::default(),
+            saves: SaveStore::new(data_dir.join("saves")),
         }
     }
 }
@@ -148,6 +151,10 @@ pub async fn scan_library(state: State<'_, Arc<AppState>>) -> CommandResult<Libr
             }
             games
         };
+        let mut games = games;
+        for game in &mut games {
+            game.has_save = state.saves.exists(game);
+        }
         *lock(&state.games) = games.iter().map(|g| (g.id.clone(), g.clone())).collect();
         Ok(LibraryScan { folder, games })
     })
@@ -186,6 +193,8 @@ pub struct GameExited {
     game_id: String,
     /// Código de saída; `null` se o processo foi encerrado por sinal.
     code: Option<i32>,
+    /// O jogo deixou progresso salvo para continuar.
+    has_save: bool,
 }
 
 /// Inicia um jogo da última varredura em um processo separado.
@@ -202,19 +211,36 @@ pub async fn launch_game(
         .get(&game_id)
         .cloned()
         .ok_or_else(|| "Jogo não encontrado; atualize a biblioteca.".to_owned())?;
-    let bindings = lock(&state.settings)
-        .controls_for(&game.console_id)
-        .unwrap_or_else(|error| {
-            eprintln!("controles salvos inválidos ({error}); usando o padrão");
-            Bindings::default()
-        });
+    let (bindings, console_settings) = {
+        let settings = lock(&state.settings);
+        let bindings = settings
+            .controls_for(&game.console_id)
+            .unwrap_or_else(|error| {
+                eprintln!("controles salvos inválidos ({error}); usando o padrão");
+                Bindings::default()
+            });
+        (bindings, settings.console(&game.console_id))
+    };
+    let options = LaunchOptions {
+        bindings,
+        // Desligado: o jogo começa do início e não grava progresso; o que já
+        // estava salvo fica intacto para quando a opção voltar.
+        state_path: console_settings.resume.then(|| state.saves.path_for(&game)),
+    };
     let state = Arc::clone(&state);
 
     tauri::async_runtime::spawn_blocking(move || {
+        let watcher = Arc::clone(&state);
+        let exited = game.clone();
         state
             .runner
-            .launch(&game, &bindings, move |code| {
-                let payload = GameExited { game_id, code };
+            .launch(&game, &options, move |code| {
+                let has_save = watcher.saves.exists(&exited);
+                let payload = GameExited {
+                    game_id,
+                    code,
+                    has_save,
+                };
                 if let Err(error) = app.emit("game-exited", payload) {
                     eprintln!("não foi possível avisar o fim do jogo: {error}");
                 }
@@ -289,6 +315,60 @@ pub async fn set_controls(
             .map_err(|error| format!("Não foi possível salvar os controles: {error}"))?;
         *settings = updated;
         Ok(ControlsInfo::new(&bindings))
+    })
+    .await
+    .map_err(|error| format!("Falha interna: {error}"))?
+}
+
+/// Apaga o progresso salvo de um jogo, para recomeçar do início.
+#[tauri::command]
+pub async fn delete_save(game_id: String, state: State<'_, Arc<AppState>>) -> CommandResult<()> {
+    let game = lock(&state.games)
+        .get(&game_id)
+        .cloned()
+        .ok_or_else(|| "Jogo não encontrado; atualize a biblioteca.".to_owned())?;
+    if state.runner.is_running() {
+        return Err("Feche o jogo em execução antes de recomeçar.".to_owned());
+    }
+    let state = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || {
+        state
+            .saves
+            .delete(&game)
+            .map_err(|error| format!("Não foi possível apagar o progresso: {error}"))
+    })
+    .await
+    .map_err(|error| format!("Falha interna: {error}"))?
+}
+
+/// Opções de jogo do console (ex.: continuar de onde parou).
+#[tauri::command]
+pub fn get_console_settings(
+    console_id: String,
+    state: State<'_, Arc<AppState>>,
+) -> CommandResult<ConsoleSettings> {
+    ensure_playable(&console_id)?;
+    Ok(lock(&state.settings).console(&console_id))
+}
+
+/// Salva as opções de jogo do console; nada muda se a gravação falhar.
+#[tauri::command]
+pub async fn set_console_settings(
+    console_id: String,
+    settings: ConsoleSettings,
+    state: State<'_, Arc<AppState>>,
+) -> CommandResult<ConsoleSettings> {
+    ensure_playable(&console_id)?;
+    let state = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut current = lock(&state.settings);
+        let mut updated = current.clone();
+        updated.set_console(&console_id, settings);
+        updated
+            .save(&state.settings_path)
+            .map_err(|error| format!("Não foi possível salvar as configurações: {error}"))?;
+        *current = updated;
+        Ok(settings)
     })
     .await
     .map_err(|error| format!("Falha interna: {error}"))?

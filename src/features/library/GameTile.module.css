@@ -166,3 +166,39 @@
     animation: none;
   }
 }
+
+/* Quadro jogável + menu: o menu fica fora do <button> (não pode haver
+   controle dentro de controle) e aparece no hover ou no foco. */
+.slot {
+  position: relative;
+}
+
+.menu {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+.slot:hover .menu,
+.menu:focus-within,
+.menu:has([aria-expanded="true"]) {
+  opacity: 1;
+}
+
+.resumeBadge {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-sm);
+  color: var(--color-secondary);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-medium);
+}

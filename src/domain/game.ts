@@ -6,6 +6,8 @@ export interface Game {
   title: string;
   fileName: string;
   recognized: boolean;
+  /** Há progresso salvo: abrir o jogo continua de onde parou. */
+  hasSave: boolean;
 }
 
 /** Espelha `commands::LibraryScan`. */

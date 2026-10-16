@@ -42,6 +42,8 @@ pub struct Game {
     pub title: String,
     pub file_name: String,
     pub recognized: bool,
+    /// Há progresso salvo para continuar (preenchido pelo launcher).
+    pub has_save: bool,
     #[serde(skip)]
     pub path: PathBuf,
     /// Nome No-Intro, usado para localizar a capa.
@@ -247,6 +249,7 @@ fn game_for(
         title: no_intro_name.clone().unwrap_or(stem),
         file_name,
         recognized: no_intro_name.is_some(),
+        has_save: false,
         path,
         no_intro_name,
     })

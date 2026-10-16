@@ -104,10 +104,15 @@
   --control-height: 2.5rem;
   --control-height-sm: 2rem;
   --count-badge-size: 1.5rem;
+  --switch-width: 2.75rem;
+  --switch-height: 1.5rem;
+  --switch-thumb: 1.125rem;
+  --switch-inset: 0.125rem;
 
   /* Camadas */
   --z-toolbar: 1;
   --z-tooltip: 2;
+  --z-menu: 5;
   --z-dialog: 10;
 
   /* Estados */
@@ -119,6 +124,7 @@
   --tooltip-max-width: 32rem;
   --dialog-max-width: 44rem;
   --key-chip-min-width: 2.25rem;
+  --menu-min-width: 11rem;
   --page-max-width: 80rem;
   --page-gutter: clamp(1rem, 4vw, 3rem);
   --tile-min-width: 10rem;

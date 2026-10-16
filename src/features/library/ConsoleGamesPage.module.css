@@ -132,3 +132,8 @@
     animation: appear 0s var(--loading-delay) both;
   }
 }
+
+.dialogText {
+  margin: 0;
+  line-height: var(--leading-normal);
+}

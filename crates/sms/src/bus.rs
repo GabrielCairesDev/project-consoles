@@ -1,6 +1,7 @@
 //! Barramento do Master System: mapa de memória, mapper Sega e portas.
 
 use crate::psg::Psg;
+use crate::state::{Reader, StateError, Writer};
 use crate::vdp::Vdp;
 use crate::z80::Bus;
 use crate::{CYCLES_PER_LINE, Joypad};
@@ -172,6 +173,30 @@ impl Bus for SmsBus {
 
     fn int_line(&self) -> bool {
         self.vdp.irq()
+    }
+}
+
+impl SmsBus {
+    /// A ROM não entra no estado: quem carrega já tem a mesma ROM (o hash é
+    /// conferido em [`crate::Console::load_state`]).
+    pub(crate) fn save_state(&self, w: &mut Writer) {
+        w.slice(self.ram.as_slice());
+        w.slice(self.cart_ram.as_slice());
+        w.slice(&self.mapper);
+        w.u8(self.io_control);
+        self.vdp.save_state(w);
+        self.psg.save_state(w);
+    }
+
+    pub(crate) fn load_state(&mut self, r: &mut Reader<'_>) -> Result<(), StateError> {
+        r.fill(self.ram.as_mut_slice())?;
+        r.fill(self.cart_ram.as_mut_slice())?;
+        r.fill(&mut self.mapper)?;
+        self.io_control = r.u8()?;
+        self.vdp.load_state(r)?;
+        self.psg.load_state(r)?;
+        self.line_cycles = 0;
+        Ok(())
     }
 }
 

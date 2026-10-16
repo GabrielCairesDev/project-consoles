@@ -16,6 +16,23 @@ pub struct Settings {
     /// Teclas por console: `console id → (ação → tecla)`. Ausente = padrão.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub controls: BTreeMap<String, BTreeMap<String, String>>,
+    /// Opções de cada console jogável. Ausente = [`ConsoleSettings::default`].
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub consoles: BTreeMap<String, ConsoleSettings>,
+}
+
+/// Opções de jogo de um console.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ConsoleSettings {
+    /// Salvar o progresso ao fechar e continuar dele ao abrir.
+    pub resume: bool,
+}
+
+impl Default for ConsoleSettings {
+    fn default() -> Self {
+        Self { resume: true }
+    }
 }
 
 impl Settings {
@@ -44,6 +61,14 @@ impl Settings {
             .map(|(action, key)| (action.to_owned(), key.to_owned()))
             .collect();
         self.controls.insert(console_id.to_owned(), keys);
+    }
+
+    pub fn console(&self, console_id: &str) -> ConsoleSettings {
+        self.consoles.get(console_id).copied().unwrap_or_default()
+    }
+
+    pub fn set_console(&mut self, console_id: &str, settings: ConsoleSettings) {
+        self.consoles.insert(console_id.to_owned(), settings);
     }
 
     pub fn save(&self, path: &Path) -> io::Result<()> {
@@ -91,10 +116,12 @@ mod tests {
         ])
         .expect("mapa válido");
         settings.set_controls("master-system", &custom);
+        settings.set_console("master-system", ConsoleSettings { resume: false });
         settings.save(&path).expect("save");
         let loaded = Settings::load(&path).expect("load");
         assert_eq!(loaded, settings);
         assert_eq!(loaded.controls_for("master-system"), Ok(custom));
+        assert!(!loaded.console("master-system").resume);
     }
 
     #[test]
@@ -112,12 +139,22 @@ mod tests {
     }
 
     #[test]
+    fn console_settings_default_to_resume() {
+        let settings = Settings::default();
+        assert!(settings.console("master-system").resume);
+        // Campo ausente no JSON também vale o padrão.
+        let parsed: ConsoleSettings = serde_json::from_str("{}").expect("json");
+        assert!(parsed.resume);
+    }
+
+    #[test]
     fn older_file_without_controls_still_loads() {
         let dir = tempfile::tempdir().expect("pasta");
         let path = dir.path().join("settings.json");
         fs::write(&path, br#"{ "libraryDir": "/Jogos" }"#).expect("escrita");
         let settings = Settings::load(&path).expect("load");
         assert!(settings.controls.is_empty());
+        assert!(settings.consoles.is_empty());
     }
 
     #[test]

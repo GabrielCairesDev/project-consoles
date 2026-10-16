@@ -20,6 +20,8 @@ use crate::library::Game;
 pub const PLAY_FLAG: &str = "--play";
 /// Argumento com o mapa de teclas do jogo (ver `player::controls`).
 pub const KEYS_FLAG: &str = "--keys";
+/// Argumento com o arquivo de estado salvo (continuar de onde parou).
+pub const STATE_FLAG: &str = "--state";
 
 /// Consoles com núcleo próprio capaz de rodar jogos.
 const PLAYABLE_CONSOLES: &[&str] = &["master-system"];
@@ -63,7 +65,15 @@ impl std::error::Error for LaunchError {
 }
 
 /// Monta o comando que roda a ROM indicada.
-type CommandBuilder = Box<dyn Fn(&Path, &Bindings) -> io::Result<Command> + Send + Sync>;
+/// Como o jogo deve rodar.
+#[derive(Debug, Clone, Default)]
+pub struct LaunchOptions {
+    pub bindings: Bindings,
+    /// Estado para continuar e onde gravar o progresso ao fechar.
+    pub state_path: Option<PathBuf>,
+}
+
+type CommandBuilder = Box<dyn Fn(&Path, &LaunchOptions) -> io::Result<Command> + Send + Sync>;
 
 /// Controla o processo do jogo em execução; só um por vez.
 pub struct Runner {
@@ -72,24 +82,30 @@ pub struct Runner {
 }
 
 impl Default for Runner {
-    /// Roda `<executável atual> --play <rom> --keys <mapa>`.
+    /// Roda `<executável atual> --play <rom> --keys <mapa> [--state <arquivo>]`.
     fn default() -> Self {
-        Self::with_command(|rom, bindings| {
-            let mut command = Command::new(std::env::current_exe()?);
-            command
-                .arg(PLAY_FLAG)
-                .arg(rom)
-                .arg(KEYS_FLAG)
-                .arg(bindings.to_arg());
-            Ok(command)
-        })
+        Self::with_command(|rom, options| Ok(play_command(&std::env::current_exe()?, rom, options)))
     }
+}
+
+/// Linha de comando do processo do jogo (o próprio executável do launcher).
+fn play_command(exe: &Path, rom: &Path, options: &LaunchOptions) -> Command {
+    let mut command = Command::new(exe);
+    command
+        .arg(PLAY_FLAG)
+        .arg(rom)
+        .arg(KEYS_FLAG)
+        .arg(options.bindings.to_arg());
+    if let Some(state) = &options.state_path {
+        command.arg(STATE_FLAG).arg(state);
+    }
+    command
 }
 
 impl Runner {
     /// Usa `command` para montar o processo de cada jogo (injetável em testes).
     pub fn with_command(
-        command: impl Fn(&Path, &Bindings) -> io::Result<Command> + Send + Sync + 'static,
+        command: impl Fn(&Path, &LaunchOptions) -> io::Result<Command> + Send + Sync + 'static,
     ) -> Self {
         Self {
             command: Box::new(command),
@@ -102,8 +118,7 @@ impl Runner {
         self.running.load(Ordering::Acquire)
     }
 
-    /// Inicia `game` com o mapa de teclas `bindings` e retorna sem esperar o
-    /// fim do processo.
+    /// Inicia `game` com `options` e retorna sem esperar o fim do processo.
     ///
     /// Quando o processo termina, a vaga é liberada e `on_exit` recebe o
     /// código de saída (`None` se o processo foi encerrado por sinal ou se a
@@ -112,7 +127,7 @@ impl Runner {
     pub fn launch(
         &self,
         game: &Game,
-        bindings: &Bindings,
+        options: &LaunchOptions,
         on_exit: impl FnOnce(Option<i32>) + Send + 'static,
     ) -> Result<(), LaunchError> {
         if !is_playable(&game.console_id) {
@@ -131,7 +146,7 @@ impl Runner {
             return Err(LaunchError::AlreadyRunning);
         }
 
-        match self.spawn_and_watch(&game.path, bindings, on_exit) {
+        match self.spawn_and_watch(&game.path, options, on_exit) {
             Ok(()) => Ok(()),
             Err(error) => {
                 self.running.store(false, Ordering::Release);
@@ -143,10 +158,10 @@ impl Runner {
     fn spawn_and_watch(
         &self,
         rom: &Path,
-        bindings: &Bindings,
+        options: &LaunchOptions,
         on_exit: impl FnOnce(Option<i32>) + Send + 'static,
     ) -> io::Result<()> {
-        let mut child = (self.command)(rom, bindings)?.spawn()?;
+        let mut child = (self.command)(rom, options)?.spawn()?;
         let running = Arc::clone(&self.running);
         // O `Child` vai para a thread; se ela não puder ser criada, o
         // closure (com o `Child`) volta no erro e não temos como esperá-lo,
@@ -188,6 +203,7 @@ mod tests {
             title: "Teste".to_owned(),
             file_name: "rom.sms".to_owned(),
             recognized: false,
+            has_save: false,
             path,
             no_intro_name: None,
         }
@@ -195,7 +211,7 @@ mod tests {
 
     /// Processo que sai com `code` depois de ~`seconds` segundos.
     fn fake_process(code: i32, seconds: u32) -> Runner {
-        Runner::with_command(move |_rom, _bindings| {
+        Runner::with_command(move |_rom, _options| {
             #[cfg(windows)]
             let command = {
                 let mut command = Command::new("cmd");
@@ -220,6 +236,39 @@ mod tests {
     }
 
     #[test]
+    fn play_command_passes_keys_and_optional_state() {
+        let exe = Path::new("/app/project-consoles");
+        let rom = Path::new("/Jogos/sonic.sms");
+        let args = |options: &LaunchOptions| -> Vec<String> {
+            play_command(exe, rom, options)
+                .get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect()
+        };
+
+        let keys = Bindings::default().to_arg();
+        assert_eq!(
+            args(&LaunchOptions::default()),
+            vec![PLAY_FLAG, "/Jogos/sonic.sms", KEYS_FLAG, keys.as_str()]
+        );
+        let with_state = LaunchOptions {
+            state_path: Some(PathBuf::from("/dados/sonic.state")),
+            ..LaunchOptions::default()
+        };
+        assert_eq!(
+            args(&with_state),
+            vec![
+                PLAY_FLAG,
+                "/Jogos/sonic.sms",
+                KEYS_FLAG,
+                keys.as_str(),
+                STATE_FLAG,
+                "/dados/sonic.state"
+            ]
+        );
+    }
+
+    #[test]
     fn only_master_system_is_playable() {
         assert!(is_playable("master-system"));
         assert!(!is_playable("mega-drive"));
@@ -234,7 +283,7 @@ mod tests {
         runner
             .launch(
                 &game("master-system", rom.path().to_owned()),
-                &Bindings::default(),
+                &LaunchOptions::default(),
                 move |code| {
                     let _ = tx.send(code);
                 },
@@ -252,19 +301,19 @@ mod tests {
         let target = game("master-system", rom.path().to_owned());
         let (tx, rx) = mpsc::channel();
         runner
-            .launch(&target, &Bindings::default(), move |code| {
+            .launch(&target, &LaunchOptions::default(), move |code| {
                 let _ = tx.send(code);
             })
             .expect("primeiro jogo inicia");
 
         assert!(runner.is_running());
-        let second = runner.launch(&target, &Bindings::default(), |_| {});
+        let second = runner.launch(&target, &LaunchOptions::default(), |_| {});
         assert!(matches!(second, Err(LaunchError::AlreadyRunning)));
 
         assert_eq!(rx.recv_timeout(TIMEOUT), Ok(Some(0)));
         let (tx, rx) = mpsc::channel();
         runner
-            .launch(&target, &Bindings::default(), move |code| {
+            .launch(&target, &LaunchOptions::default(), move |code| {
                 let _ = tx.send(code);
             })
             .expect("vaga liberada após o fim do primeiro");
@@ -277,7 +326,7 @@ mod tests {
         let runner = fake_process(0, 0);
         let result = runner.launch(
             &game("mega-drive", rom.path().to_owned()),
-            &Bindings::default(),
+            &LaunchOptions::default(),
             |_| {},
         );
         assert!(matches!(
@@ -294,7 +343,7 @@ mod tests {
         let runner = fake_process(0, 0);
         let result = runner.launch(
             &game("master-system", missing.clone()),
-            &Bindings::default(),
+            &LaunchOptions::default(),
             |_| {},
         );
         assert!(matches!(result, Err(LaunchError::RomMissing(path)) if path == missing));
@@ -308,7 +357,7 @@ mod tests {
             Ok(Command::new("/caminho/que/nao/existe/project-consoles"))
         });
         let target = game("master-system", rom.path().to_owned());
-        let result = runner.launch(&target, &Bindings::default(), |_| {});
+        let result = runner.launch(&target, &LaunchOptions::default(), |_| {});
         assert!(matches!(result, Err(LaunchError::Spawn(_))));
         assert!(!runner.is_running());
     }
@@ -319,7 +368,7 @@ mod tests {
         let runner = Runner::with_command(|_, _| Err(io::Error::other("sem executável")));
         let result = runner.launch(
             &game("master-system", rom.path().to_owned()),
-            &Bindings::default(),
+            &LaunchOptions::default(),
             |_| {},
         );
         assert!(matches!(result, Err(LaunchError::Spawn(_))));

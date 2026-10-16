@@ -18,6 +18,8 @@ Gerado com a skill UI UX Pro Max (`--design-system "gaming emulator launcher dar
 - **Movimento:** durações curtas (120/200/320 ms), zeradas com `prefers-reduced-motion`.
 - **Diálogos:** `components/Dialog` (modal próprio, já que o `<dialog>` nativo não é suportado no jsdom dos testes): fundo `--color-backdrop`, foco preso dentro, Esc ou clique fora fecham e o foco volta a quem abriu.
 - **Controles:** o controle de cada console é desenhado em SVG com os tokens `--color-controller-*`, e cada tecla é um botão (chip) sobre o botão desenhado. A troca é salva na hora e, se a tecla já estiver em uso, as duas ações trocam de tecla.
+- **Menus:** `components/Menu` (botão ⋯ e menu suspenso). Setas navegam, Esc e clique fora fecham, e o clique direito no quadro abre o mesmo menu. Ações destrutivas usam `--color-danger` e pedem confirmação num `Dialog`.
+- **Opções:** `components/Switch` (`role="switch"`), com rótulo e descrição do efeito. A alteração vale na hora e é salva; se falhar, volta ao valor anterior e mostra o erro.
 - **Foco:** contorno de 2px com `--color-focus-ring` em todo `:focus-visible`.
 - **Contraste:** texto principal `#E2E8F0` e secundário `#94A3B8` sobre `#0B0B14` passam de 4.5:1; texto sobre a primária usa branco.
 
