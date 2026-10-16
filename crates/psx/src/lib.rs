@@ -6,8 +6,9 @@
 //! O BIOS é do usuário: o console não liga sem ele (o da Sony é
 //! proprietário e não vem junto).
 //!
-//! Estado atual: CPU, GTE, memória, interrupções, timers, DMA e a GPU.
-//! CD-ROM, SPU, MDEC e controles ainda são só registradores.
+//! Estado atual: CPU, GTE, memória, interrupções, timers, DMA, a GPU, o
+//! controle digital e o memory card na porta 1. CD-ROM, SPU e MDEC ainda
+//! são só registradores.
 
 mod bus;
 mod cdrom;
@@ -22,6 +23,7 @@ mod timers;
 
 use bus::{BIOS_SIZE, Bus, RAM_SIZE};
 use cpu::Cpu;
+pub use sio::{Buttons, MEMORY_CARD_SIZE, MemoryCardError};
 
 /// Clock da CPU (Hz): 44100 × 768.
 pub const CPU_CLOCK: u32 = 33_868_800;
@@ -192,6 +194,23 @@ impl Console {
         self.cpu.jump_to(exe.pc);
     }
 
+    /// Botões apertados no controle da porta 1.
+    pub fn set_input(&mut self, buttons: Buttons) {
+        self.bus.sio.set_buttons(buttons);
+    }
+
+    /// Conteúdo do memory card da porta 1 (128 KB, formato bruto `.mcr`):
+    /// o save dos jogos.
+    pub fn memory_card(&self) -> &[u8] {
+        self.bus.sio.memory_card()
+    }
+
+    /// Coloca um memory card salvo na porta 1. Tamanho errado ou cartão não
+    /// formatado é recusado e o cartão atual fica como está.
+    pub fn load_memory_card(&mut self, bytes: &[u8]) -> Result<(), MemoryCardError> {
+        self.bus.sio.load_memory_card(bytes)
+    }
+
     /// Imagem do último quadro, `0x00RRGGBB`, e o tamanho (largura,
     /// altura), que muda com o modo de vídeo.
     pub fn framebuffer(&self) -> (&[u32], (usize, usize)) {
@@ -206,6 +225,12 @@ impl Console {
     /// Texto escrito pelo BIOS (putchar), usado pelos programas de teste.
     pub fn tty_output(&self) -> &[u8] {
         &self.tty
+    }
+
+    /// Retira o texto escrito até aqui, para acompanhar saídas longas sem
+    /// perder o começo.
+    pub fn take_tty_output(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.tty)
     }
 
     /// Ciclos executados desde que o console ligou.

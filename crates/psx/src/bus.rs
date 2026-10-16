@@ -93,7 +93,7 @@ pub(crate) struct Bus {
     pub(crate) gpu: Gpu,
     cdrom: Cdrom,
     spu: Spu,
-    sio: Sio,
+    pub(crate) sio: Sio,
 }
 
 impl Bus {
@@ -241,7 +241,10 @@ impl Bus {
         let shift = (offset & 3) * 8;
         match offset {
             0x000..=0x023 => self.memory_control[(offset / 4) as usize] >> shift,
-            0x040..=0x04F => self.sio.read(offset - 0x40),
+            0x040..=0x04F => {
+                self.sync_sio();
+                self.sio.read(offset - 0x40)
+            }
             0x060..=0x063 => self.ram_size >> shift,
             0x070..=0x073 => u32::from(self.irq.status()) >> shift,
             0x074..=0x077 => u32::from(self.irq.mask()) >> shift,
@@ -278,7 +281,11 @@ impl Bus {
         let offset = p - IO;
         match offset {
             0x000..=0x023 => self.memory_control[(offset / 4) as usize] = value,
-            0x040..=0x04F => self.sio.write(offset - 0x40, value),
+            0x040..=0x04F => {
+                self.sync_sio();
+                self.sio.write(offset - 0x40, value, self.now);
+                self.reschedule();
+            }
             0x060..=0x063 => self.ram_size = value,
             0x070..=0x073 => self.irq.acknowledge(value as u16),
             0x074..=0x077 => self.irq.set_mask(value as u16),
@@ -439,12 +446,22 @@ impl Bus {
         });
         let irqs = self.timers.sync(now, self.gpu.dot_divider());
         Self::raise_timer_irqs(&mut self.irq, irqs);
+        self.sync_sio();
+    }
+
+    fn sync_sio(&mut self) {
+        if self.sio.sync(self.now) {
+            self.irq.request(Irq::Controller);
+        }
     }
 
     fn reschedule(&mut self) {
         let mut next = self.gpu.next_event();
         if let Some(cycles) = self.timers.cycles_to_next_irq(self.gpu.dot_divider()) {
             next = next.min(self.now + cycles);
+        }
+        if let Some(at) = self.sio.next_event() {
+            next = next.min(at);
         }
         self.next_event = next;
     }

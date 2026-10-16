@@ -215,3 +215,36 @@ fn gte_test_all_passes() {
     assert_eq!(failed, Some(0), "{out}");
     assert!(passed.is_some_and(|n| n > 0), "{out}");
 }
+
+#[test]
+#[ignore = "precisa do BIOS e dos programas de teste (PSX_TESTS_DIR)"]
+fn gte_fuzz_matches_hardware_log() {
+    let Some(dir) = tests_dir() else {
+        panic!("defina PSX_TESTS_DIR");
+    };
+    let fuzz = dir.join("ps1-tests/gte-fuzz");
+    let exe = std::fs::read(fuzz.join("gte-fuzz.exe")).expect("gte-fuzz.exe");
+    let reference = std::fs::read(fuzz.join("gte_valid_0xc0ffee_50.log")).expect("log do hardware");
+    let reference = String::from_utf8_lossy(&reference).replace('\r', "");
+    let mut console = console(&dir);
+    console.load_exe(&exe).expect("PS-EXE válido");
+    // O programa espera o controle: START roda o fuzz dos comandos válidos.
+    let mut out = Vec::new();
+    for frame in 0..40_000 {
+        console.set_input(psx::Buttons {
+            start: (200..230).contains(&frame),
+            ..psx::Buttons::default()
+        });
+        console.run_frame();
+        out.extend(console.take_tty_output());
+        if out.ends_with(b"==== END ====\n") || out.ends_with(b"==== END ====\r\n") {
+            break;
+        }
+    }
+    let out = String::from_utf8_lossy(&out).replace('\r', "");
+    let start = out.find("==== VALID CMD FUZZ").expect("o fuzz começou");
+    let got = &out[start..];
+    let first_diff = got.lines().zip(reference.lines()).position(|(a, b)| a != b);
+    assert_eq!(first_diff, None, "primeira linha diferente");
+    assert_eq!(got.lines().count(), reference.lines().count());
+}
