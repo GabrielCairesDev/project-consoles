@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { RotateCw, TriangleAlert } from "lucide-react";
+import { Button } from "../../components/Button";
 import { SegmentedControl, type SegmentedOption } from "../../components/SegmentedControl";
 import {
   type Console,
@@ -19,7 +20,7 @@ const SORT_OPTIONS: readonly SegmentedOption<SortOrder>[] = [
   { value: "popularity", label: "Popularidade" },
 ];
 
-export function ConsoleCatalogPage() {
+export function ConsoleCatalogPage({ onSelect }: { onSelect: (console: Console) => void }) {
   const { state, retry } = useConsoles();
   const [sort, setSort] = useState<SortOrder>("year");
 
@@ -38,7 +39,7 @@ export function ConsoleCatalogPage() {
           (state.consoles.length === 0 ? (
             <p className={styles.message}>Nenhum console encontrado no catálogo.</p>
           ) : (
-            <Catalog consoles={state.consoles} sort={sort} />
+            <Catalog consoles={state.consoles} sort={sort} onSelect={onSelect} />
           ))}
       </div>
     </main>
@@ -48,9 +49,10 @@ export function ConsoleCatalogPage() {
 interface CatalogProps {
   consoles: Console[];
   sort: SortOrder;
+  onSelect: (console: Console) => void;
 }
 
-function Catalog({ consoles, sort }: CatalogProps) {
+function Catalog({ consoles, sort, onSelect }: CatalogProps) {
   const sorted = useMemo(() => sortConsoles(consoles, sort), [consoles, sort]);
   const decades = useMemo(() => (sort === "year" ? groupByDecade(sorted) : null), [sorted, sort]);
 
@@ -58,7 +60,7 @@ function Catalog({ consoles, sort }: CatalogProps) {
   if (!decades) {
     return (
       <section aria-label="Consoles por popularidade">
-        <ConsoleCollection consoles={sorted} />
+        <ConsoleCollection consoles={sorted} onSelect={onSelect} />
       </section>
     );
   }
@@ -72,7 +74,7 @@ function Catalog({ consoles, sort }: CatalogProps) {
             <h2 id={headingId} className={styles.decadeTitle}>
               {decadeLabel(decade)}
             </h2>
-            <ConsoleCollection consoles={items} />
+            <ConsoleCollection consoles={items} onSelect={onSelect} />
           </section>
         );
       })}
@@ -99,10 +101,9 @@ function ErrorState({ onRetry }: { onRetry: () => void }) {
       <TriangleAlert className={styles.errorIcon} aria-hidden="true" />
       <p className={styles.errorTitle}>Não foi possível carregar os consoles.</p>
       <p className={styles.errorText}>Verifique se o aplicativo está em execução e tente novamente.</p>
-      <button type="button" className={styles.button} onClick={onRetry}>
-        <RotateCw className={styles.buttonIcon} aria-hidden="true" />
+      <Button icon={RotateCw} onClick={onRetry}>
         Tentar novamente
-      </button>
+      </Button>
     </div>
   );
 }

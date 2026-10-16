@@ -8,6 +8,7 @@ import { ConsoleCatalogPage } from "./ConsoleCatalogPage";
 vi.mock("../../services/consoles", () => ({ fetchConsoles: vi.fn() }));
 
 const fetchMock = vi.mocked(fetchConsoles);
+const noop = () => {};
 
 const CONSOLES: Console[] = [
   {
@@ -17,6 +18,7 @@ const CONSOLES: Console[] = [
     releaseYear: 1985,
     kind: "home",
     unitsSold: 13_000_000,
+    supported: true,
   },
   {
     id: "game-boy",
@@ -25,6 +27,7 @@ const CONSOLES: Console[] = [
     releaseYear: 1989,
     kind: "handheld",
     unitsSold: 118_690_000,
+    supported: true,
   },
   {
     id: "playstation-2",
@@ -33,6 +36,7 @@ const CONSOLES: Console[] = [
     releaseYear: 2000,
     kind: "home",
     unitsSold: 160_000_000,
+    supported: false,
   },
 ];
 
@@ -57,7 +61,7 @@ describe("ConsoleCatalogPage", () => {
 
   it("não exibe cabeçalho visível, só um título para leitores de tela", async () => {
     fetchMock.mockResolvedValue(CONSOLES);
-    render(<ConsoleCatalogPage />);
+    render(<ConsoleCatalogPage onSelect={noop} />);
     await screen.findByRole("region", { name: "Anos 1980" });
 
     expect(screen.queryByRole("banner")).toBeNull();
@@ -67,7 +71,7 @@ describe("ConsoleCatalogPage", () => {
 
   it("mostra estado de carregamento acessível enquanto aguarda o núcleo", () => {
     fetchMock.mockReturnValue(deferred<Console[]>().promise);
-    render(<ConsoleCatalogPage />);
+    render(<ConsoleCatalogPage onSelect={noop} />);
 
     const status = screen.getByRole("status");
     expect(status).toHaveAttribute("aria-busy", "true");
@@ -76,7 +80,7 @@ describe("ConsoleCatalogPage", () => {
 
   it("na grade, cada quadro mostra só o logo, nomeado pelo console", async () => {
     fetchMock.mockResolvedValue(CONSOLES);
-    render(<ConsoleCatalogPage />);
+    render(<ConsoleCatalogPage onSelect={noop} />);
 
     const eighties = await screen.findByRole("region", { name: "Anos 1980" });
     const tiles = within(eighties).getAllByRole("listitem");
@@ -92,7 +96,7 @@ describe("ConsoleCatalogPage", () => {
 
   it("agrupa por década sem exibir a contagem de consoles", async () => {
     fetchMock.mockResolvedValue(CONSOLES);
-    render(<ConsoleCatalogPage />);
+    render(<ConsoleCatalogPage onSelect={noop} />);
     await screen.findByRole("region", { name: "Anos 1980" });
 
     expect(screen.getByRole("heading", { level: 2, name: "Anos 1980" })).toHaveTextContent(
@@ -104,7 +108,7 @@ describe("ConsoleCatalogPage", () => {
 
   it("ordena por popularidade numa sequência única, mais vendido primeiro", async () => {
     fetchMock.mockResolvedValue(CONSOLES);
-    render(<ConsoleCatalogPage />);
+    render(<ConsoleCatalogPage onSelect={noop} />);
     await screen.findByRole("region", { name: "Anos 1980" });
     expect(gridOrder()).toEqual(["Master System", "Game Boy", "PlayStation 2"]);
 
@@ -117,7 +121,7 @@ describe("ConsoleCatalogPage", () => {
 
   it("oferece só ordenação, sem alternar modo de exibição", async () => {
     fetchMock.mockResolvedValue(CONSOLES);
-    render(<ConsoleCatalogPage />);
+    render(<ConsoleCatalogPage onSelect={noop} />);
     await screen.findByRole("region", { name: "Anos 1980" });
 
     expect(screen.getAllByRole("radio").map((r) => r.getAttribute("value"))).toEqual([
@@ -128,9 +132,20 @@ describe("ConsoleCatalogPage", () => {
   });
 
 
+  it("cada quadro é um botão nomeado pelo console que abre seus jogos", async () => {
+    fetchMock.mockResolvedValue(CONSOLES);
+    const onSelect = vi.fn();
+    render(<ConsoleCatalogPage onSelect={onSelect} />);
+    await screen.findByRole("region", { name: "Anos 1980" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Game Boy" }));
+
+    expect(onSelect).toHaveBeenCalledWith(CONSOLES[1]);
+  });
+
   it("mostra o nome quando o console não tem logo", async () => {
     fetchMock.mockResolvedValue([{ ...CONSOLES[0], id: "sem-logo", name: "Console Teste" }]);
-    render(<ConsoleCatalogPage />);
+    render(<ConsoleCatalogPage onSelect={noop} />);
     await screen.findByRole("region", { name: "Anos 1980" });
 
     expect(screen.queryByRole("img")).toBeNull();
@@ -139,14 +154,14 @@ describe("ConsoleCatalogPage", () => {
 
   it("mostra estado vazio quando o catálogo não tem consoles", async () => {
     fetchMock.mockResolvedValue([]);
-    render(<ConsoleCatalogPage />);
+    render(<ConsoleCatalogPage onSelect={noop} />);
 
     expect(await screen.findByText("Nenhum console encontrado no catálogo.")).toBeInTheDocument();
   });
 
   it("mostra erro e recupera ao tentar novamente", async () => {
     fetchMock.mockRejectedValueOnce(new Error("ipc indisponível")).mockResolvedValueOnce(CONSOLES);
-    render(<ConsoleCatalogPage />);
+    render(<ConsoleCatalogPage onSelect={noop} />);
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Não foi possível carregar os consoles.");
@@ -164,7 +179,7 @@ describe("ConsoleCatalogPage", () => {
     fetchMock.mockReturnValueOnce(stale.promise).mockResolvedValueOnce(CONSOLES);
     render(
       <StrictMode>
-        <ConsoleCatalogPage />
+        <ConsoleCatalogPage onSelect={noop} />
       </StrictMode>,
     );
     await screen.findByRole("region", { name: "Anos 1980" });

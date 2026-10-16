@@ -93,30 +93,6 @@
   font-size: var(--text-sm);
 }
 
-.button {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: var(--control-height);
-  padding: 0 var(--space-4);
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: var(--color-primary);
-  color: var(--color-on-primary);
-  font: inherit;
-  font-weight: var(--font-weight-semibold);
-  cursor: pointer;
-  transition: background-color var(--duration-fast) var(--ease-out);
-}
-
-.button:hover {
-  background: var(--color-primary-hover);
-}
-
-.buttonIcon {
-  width: var(--icon-sm);
-  height: var(--icon-sm);
-}
 
 .visuallyHidden {
   position: absolute;

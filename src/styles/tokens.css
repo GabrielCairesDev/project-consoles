@@ -97,6 +97,10 @@
   --page-max-width: 80rem;
   --page-gutter: clamp(1rem, 4vw, 3rem);
   --tile-min-width: 10rem;
+  --game-tile-min-width: 11rem;
+  --game-tile-ratio: 1;
+  --games-header-logo-width: 9rem;
+  --games-header-logo-height: 2.5rem;
 }
 
 @media (prefers-reduced-motion: reduce) {

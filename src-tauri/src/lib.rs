@@ -1,12 +1,15 @@
 pub mod catalog;
+pub mod commands;
+pub mod covers;
+pub mod dat;
+pub mod identify;
+pub mod library;
+pub mod settings;
+pub mod systems;
 
-use catalog::Console;
+use std::sync::Arc;
 
-/// Lista o catálogo de consoles para a interface.
-#[tauri::command]
-fn list_consoles() -> &'static [Console] {
-    catalog::consoles()
-}
+use tauri::Manager;
 
 /// Inicia a aplicação Tauri e bloqueia até a janela principal ser fechada.
 ///
@@ -18,7 +21,24 @@ fn list_consoles() -> &'static [Console] {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![list_consoles])
+        .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let paths = app.path();
+            let state = commands::AppState::new(
+                paths.app_config_dir()?,
+                paths.app_data_dir()?,
+                paths.app_cache_dir()?,
+            );
+            app.manage(Arc::new(state));
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            commands::list_consoles,
+            commands::get_library_dir,
+            commands::set_library_dir,
+            commands::scan_library,
+            commands::game_cover,
+        ])
         .run(tauri::generate_context!())
         .expect("falha ao iniciar a aplicação Tauri");
 }

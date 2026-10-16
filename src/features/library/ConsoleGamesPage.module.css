@@ -1,0 +1,146 @@
+.page {
+  min-height: 100%;
+  padding: 0 var(--page-gutter) var(--space-16);
+  background: var(--color-bg);
+}
+
+.toolbar,
+.content {
+  max-width: var(--page-max-width);
+  margin-inline: auto;
+}
+
+/* Fixa no topo ao rolar, com fundo opaco para não sobrepor as capas. */
+.toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  padding: var(--space-6) 0 var(--space-4);
+  background: var(--color-bg);
+}
+
+.consoleLogo {
+  display: flex;
+  align-items: center;
+  width: var(--games-header-logo-width);
+  height: var(--games-header-logo-height);
+}
+
+.content {
+  padding-top: var(--space-2);
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+/* Caminho da pasta: ocupa o espaço livre e corta com reticências. */
+.folder {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--game-tile-min-width), 1fr));
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Estados */
+
+.skeleton {
+  aspect-ratio: var(--game-tile-ratio);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  /* Só aparece se a varredura demorar, evitando piscar em respostas rápidas. */
+  animation:
+    appear var(--duration-normal) var(--ease-out) var(--loading-delay) both,
+    pulse var(--duration-pulse) ease-in-out var(--loading-delay) infinite;
+}
+
+.message {
+  color: var(--color-text-muted);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  max-width: var(--content-max-width);
+  padding: var(--space-6);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.panelIcon {
+  width: var(--icon-md);
+  height: var(--icon-md);
+  color: var(--color-secondary);
+}
+
+.errorIcon {
+  width: var(--icon-md);
+  height: var(--icon-md);
+  color: var(--color-warning);
+}
+
+.panelTitle {
+  font-weight: var(--font-weight-semibold);
+}
+
+.panelText {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.panel > :global(button) {
+  margin-top: var(--space-2);
+}
+
+.inlineError {
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@keyframes appear {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes pulse {
+  50% {
+    background: var(--color-surface-raised);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: appear 0s var(--loading-delay) both;
+  }
+}

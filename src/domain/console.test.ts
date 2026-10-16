@@ -7,7 +7,7 @@ import {
 } from "./console";
 
 function make(id: string, releaseYear: number, unitsSold = 1_000_000): Console {
-  return { id, name: id, manufacturer: "X", releaseYear, kind: "home", unitsSold };
+  return { id, name: id, manufacturer: "X", releaseYear, kind: "home", unitsSold, supported: true };
 }
 
 const ids = (consoles: readonly Console[]) => consoles.map((c) => c.id);

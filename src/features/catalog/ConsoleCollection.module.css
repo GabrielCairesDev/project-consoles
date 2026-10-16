@@ -10,10 +10,22 @@
 /* Proporção fixa: reserva espaço e evita layout shift. */
 .tile {
   position: relative;
+  display: block;
+  width: 100%;
   aspect-ratio: 1;
+  padding: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-surface);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out);
+}
+
+.tile:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-raised);
 }
 
 /*

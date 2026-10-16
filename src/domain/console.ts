@@ -9,6 +9,8 @@ export interface Console {
   releaseYear: number;
   kind: ConsoleKind;
   unitsSold: number;
+  /** O app reconhece ROMs deste console. */
+  supported: boolean;
 }
 
 export type SortOrder = "year" | "popularity";
