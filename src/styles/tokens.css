@@ -28,6 +28,15 @@
   /* Brilho do placeholder de carregamento. */
   --color-shimmer: rgb(167 139 250 / 0.14);
 
+  /* Fundo atrás de janelas modais. */
+  --color-backdrop: rgb(5 5 12 / 0.72);
+
+  /* Desenho do controle (Master System): corpo preto fosco, botões grafite. */
+  --color-controller-body: #18181f;
+  --color-controller-edge: #2f2e44;
+  --color-controller-pad: #0d0d12;
+  --color-controller-print: #94a3b8;
+
   /* Cores: semânticas */
   --color-success: #22c55e;
   --color-warning: #f59e0b;
@@ -70,6 +79,7 @@
   /* Elevação */
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
   --shadow-md: 0 8px 24px rgb(0 0 0 / 0.45);
+  --shadow-lg: 0 24px 64px rgb(0 0 0 / 0.6);
 
   /* Ícones */
   --icon-xs: 12px;
@@ -95,6 +105,11 @@
   --control-height-sm: 2rem;
   --count-badge-size: 1.5rem;
 
+  /* Camadas */
+  --z-toolbar: 1;
+  --z-tooltip: 2;
+  --z-dialog: 10;
+
   /* Estados */
   --loading-delay: 150ms;
   --tooltip-delay: 300ms;
@@ -102,6 +117,8 @@
   /* Layout */
   --content-max-width: 40rem;
   --tooltip-max-width: 32rem;
+  --dialog-max-width: 44rem;
+  --key-chip-min-width: 2.25rem;
   --page-max-width: 80rem;
   --page-gutter: clamp(1rem, 4vw, 3rem);
   --tile-min-width: 10rem;

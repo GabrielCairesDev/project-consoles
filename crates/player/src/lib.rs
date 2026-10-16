@@ -4,10 +4,11 @@
 //! precisa da thread principal (no macOS só pode existir um por processo) e
 //! um travamento aqui não derruba a biblioteca.
 //!
-//! Controles: setas = direcional, Z = botão 1, X = botão 2, Enter = Pause,
-//! Esc = fechar.
+//! Controles: configuráveis por [`controls::Bindings`] (padrão: setas,
+//! Z = botão 1, X = botão 2, Enter = Pause). Esc sempre fecha o jogo.
 
 mod audio;
+pub mod controls;
 mod ring;
 mod video;
 
@@ -26,6 +27,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 use audio::AudioOut;
+use controls::{Action, Bindings};
 
 /// Taxa usada quando não há áudio: o PSG precisa de alguma taxa de saída.
 const FALLBACK_SAMPLE_RATE: u32 = 44_100;
@@ -59,7 +61,7 @@ impl fmt::Display for PlayerError {
 impl std::error::Error for PlayerError {}
 
 /// Abre a janela e executa o jogo até o usuário fechá-la.
-pub fn run(rom_path: &Path) -> Result<(), PlayerError> {
+pub fn run(rom_path: &Path, bindings: Bindings) -> Result<(), PlayerError> {
     let rom = std::fs::read(rom_path).map_err(PlayerError::ReadRom)?;
     let audio = match AudioOut::open() {
         Ok(audio) => Some(audio),
@@ -87,7 +89,8 @@ pub fn run(rom_path: &Path) -> Result<(), PlayerError> {
         audio_scratch: Vec::new(),
         context,
         window: None,
-        keys: Keys::default(),
+        bindings,
+        joypad: Joypad::default(),
         frame_duration: Duration::from_secs_f64(1.0 / sms::FRAME_RATE),
         next_frame: Instant::now(),
         error: None,
@@ -110,7 +113,8 @@ struct App {
     audio_scratch: Vec<f32>,
     context: softbuffer::Context<OwnedDisplayHandle>,
     window: Option<GameWindow>,
-    keys: Keys,
+    bindings: Bindings,
+    joypad: Joypad,
     frame_duration: Duration,
     next_frame: Instant,
     error: Option<PlayerError>,
@@ -142,7 +146,7 @@ impl App {
     }
 
     fn run_frame(&mut self) {
-        self.console.set_input(self.keys.joypad);
+        self.console.set_input(self.joypad);
         self.console.run_frame();
         self.audio_scratch.clear();
         self.console.drain_audio(&mut self.audio_scratch);
@@ -182,8 +186,11 @@ impl App {
         let pressed = event.state == ElementState::Pressed;
         match code {
             KeyCode::Escape if pressed => event_loop.exit(),
-            KeyCode::Enter if pressed && !event.repeat => self.console.press_pause(),
-            _ => self.keys.set(code, pressed),
+            _ => match self.bindings.action_for(code) {
+                Some(Action::Pause) if pressed && !event.repeat => self.console.press_pause(),
+                Some(action) => set_button(&mut self.joypad, action, pressed),
+                None => {}
+            },
         }
     }
 }
@@ -213,7 +220,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::KeyboardInput { event, .. } => self.handle_key(event_loop, &event),
             // Sem foco, nenhuma tecla fica "presa".
-            WindowEvent::Focused(false) => self.keys = Keys::default(),
+            WindowEvent::Focused(false) => self.joypad = Joypad::default(),
             _ => {}
         }
     }
@@ -242,26 +249,19 @@ impl ApplicationHandler for App {
     }
 }
 
-/// Teclas do controle atualmente pressionadas.
-#[derive(Debug, Default, Clone, Copy)]
-struct Keys {
-    joypad: Joypad,
-}
-
-impl Keys {
-    fn set(&mut self, code: KeyCode, pressed: bool) {
-        let p = &mut self.joypad;
-        let button = match code {
-            KeyCode::ArrowUp => &mut p.up,
-            KeyCode::ArrowDown => &mut p.down,
-            KeyCode::ArrowLeft => &mut p.left,
-            KeyCode::ArrowRight => &mut p.right,
-            KeyCode::KeyZ => &mut p.button1,
-            KeyCode::KeyX => &mut p.button2,
-            _ => return,
-        };
-        *button = pressed;
-    }
+/// Aplica uma ação do controle ao estado dos botões (Pause não é botão do
+/// controle: vira NMI em `handle_key`).
+fn set_button(joypad: &mut Joypad, action: Action, pressed: bool) {
+    let button = match action {
+        Action::Up => &mut joypad.up,
+        Action::Down => &mut joypad.down,
+        Action::Left => &mut joypad.left,
+        Action::Right => &mut joypad.right,
+        Action::Button1 => &mut joypad.button1,
+        Action::Button2 => &mut joypad.button2,
+        Action::Pause => return,
+    };
+    *button = pressed;
 }
 
 #[cfg(test)]
@@ -269,20 +269,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn keys_map_to_joypad() {
-        let mut keys = Keys::default();
-        keys.set(KeyCode::ArrowLeft, true);
-        keys.set(KeyCode::KeyZ, true);
-        keys.set(KeyCode::KeyQ, true);
+    fn actions_map_to_joypad() {
+        let mut joypad = Joypad::default();
+        set_button(&mut joypad, Action::Left, true);
+        set_button(&mut joypad, Action::Button1, true);
+        set_button(&mut joypad, Action::Pause, true);
         assert_eq!(
-            keys.joypad,
+            joypad,
             Joypad {
                 left: true,
                 button1: true,
                 ..Joypad::default()
             }
         );
-        keys.set(KeyCode::ArrowLeft, false);
-        assert!(!keys.joypad.left);
+        set_button(&mut joypad, Action::Left, false);
+        assert!(!joypad.left);
     }
 }

@@ -11,9 +11,15 @@ import {
   onGameExited,
   scanLibrary,
 } from "../../services/library";
+import { getControls } from "../../services/controls";
 import { ConsoleGamesPage } from "./ConsoleGamesPage";
 import { LibraryProvider } from "./LibraryProvider";
 import { clearCoverCache } from "./useCover";
+
+vi.mock("../../services/controls", () => ({
+  getControls: vi.fn(),
+  saveControls: vi.fn(),
+}));
 
 vi.mock("../../services/library", () => ({
   getLibraryDir: vi.fn(),
@@ -109,6 +115,7 @@ describe("ConsoleGamesPage", () => {
     renderPage({ ...GBA, id: "playstation", name: "PlayStation", supported: false });
 
     expect(screen.queryByRole("button", { name: "Trocar pasta" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Configurar controles" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Atualizar" })).toBeNull();
 
     expect(
@@ -326,6 +333,22 @@ describe("ConsoleGamesPage", () => {
 
       expect(launchMock).toHaveBeenCalledWith("sonic.sms");
       expect(launchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("botão de controles abre o diálogo e Esc devolve o foco", async () => {
+      vi.mocked(getControls).mockReturnValue(new Promise(() => {}));
+      await renderPlayable();
+
+      const open = screen.getByRole("button", { name: "Configurar controles" });
+      open.focus();
+      fireEvent.click(open);
+
+      const dialog = screen.getByRole("dialog", { name: "Controles · Master System" });
+      expect(getControls).toHaveBeenCalledWith("master-system");
+      fireEvent.keyDown(dialog, { key: "Escape" });
+
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(open).toHaveFocus();
     });
 
     it("jogo aberto mostra 'Em execução' e desativa os demais", async () => {

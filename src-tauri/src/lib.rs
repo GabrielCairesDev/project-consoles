@@ -40,6 +40,8 @@ pub fn run() {
             commands::scan_library,
             commands::game_cover,
             commands::launch_game,
+            commands::get_controls,
+            commands::set_controls,
         ])
         .run(tauri::generate_context!())
         .expect("falha ao iniciar a aplicação Tauri");

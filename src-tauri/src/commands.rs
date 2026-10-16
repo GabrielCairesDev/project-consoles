@@ -1,10 +1,11 @@
 //! Comandos expostos à interface. Trabalho de disco e rede roda em
 //! `spawn_blocking`, fora da thread da interface.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use player::controls::{Bindings, SUPPORTED_KEYS};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
@@ -201,18 +202,93 @@ pub async fn launch_game(
         .get(&game_id)
         .cloned()
         .ok_or_else(|| "Jogo não encontrado; atualize a biblioteca.".to_owned())?;
+    let bindings = lock(&state.settings)
+        .controls_for(&game.console_id)
+        .unwrap_or_else(|error| {
+            eprintln!("controles salvos inválidos ({error}); usando o padrão");
+            Bindings::default()
+        });
     let state = Arc::clone(&state);
 
     tauri::async_runtime::spawn_blocking(move || {
         state
             .runner
-            .launch(&game, move |code| {
+            .launch(&game, &bindings, move |code| {
                 let payload = GameExited { game_id, code };
                 if let Err(error) = app.emit("game-exited", payload) {
                     eprintln!("não foi possível avisar o fim do jogo: {error}");
                 }
             })
             .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("Falha interna: {error}"))?
+}
+
+/// Teclas de um console, para a tela de configuração de controles.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ControlsInfo {
+    /// Ação → tecla (nomes de `KeyboardEvent.code`).
+    bindings: BTreeMap<&'static str, &'static str>,
+    defaults: BTreeMap<&'static str, &'static str>,
+    /// Teclas que podem ser atribuídas.
+    supported_keys: Vec<&'static str>,
+}
+
+impl ControlsInfo {
+    fn new(bindings: &Bindings) -> Self {
+        Self {
+            bindings: bindings.pairs().collect(),
+            defaults: Bindings::default().pairs().collect(),
+            supported_keys: SUPPORTED_KEYS.iter().map(|(name, _)| *name).collect(),
+        }
+    }
+}
+
+fn ensure_playable(console_id: &str) -> CommandResult<()> {
+    if runtime::is_playable(console_id) {
+        Ok(())
+    } else {
+        Err("Este console ainda não tem controles configuráveis.".to_owned())
+    }
+}
+
+/// Teclas configuradas para o console (o padrão, se nunca foram alteradas
+/// ou se o que foi salvo está inválido).
+#[tauri::command]
+pub fn get_controls(
+    console_id: String,
+    state: State<'_, Arc<AppState>>,
+) -> CommandResult<ControlsInfo> {
+    ensure_playable(&console_id)?;
+    let bindings = lock(&state.settings)
+        .controls_for(&console_id)
+        .unwrap_or_default();
+    Ok(ControlsInfo::new(&bindings))
+}
+
+/// Salva as teclas do console. Rejeita mapas incompletos, teclas não
+/// suportadas e teclas repetidas; nada muda se a gravação falhar.
+#[tauri::command]
+pub async fn set_controls(
+    console_id: String,
+    bindings: HashMap<String, String>,
+    state: State<'_, Arc<AppState>>,
+) -> CommandResult<ControlsInfo> {
+    ensure_playable(&console_id)?;
+    let bindings = Bindings::from_pairs(bindings.iter().map(|(a, k)| (a.as_str(), k.as_str())))
+        .map_err(|error| format!("Mapa de controles inválido: {error}"))?;
+    let state = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut settings = lock(&state.settings);
+        let mut updated = settings.clone();
+        updated.set_controls(&console_id, &bindings);
+        updated
+            .save(&state.settings_path)
+            .map_err(|error| format!("Não foi possível salvar os controles: {error}"))?;
+        *settings = updated;
+        Ok(ControlsInfo::new(&bindings))
     })
     .await
     .map_err(|error| format!("Falha interna: {error}"))?

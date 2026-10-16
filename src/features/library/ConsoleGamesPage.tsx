@@ -1,10 +1,11 @@
-import { useMemo } from "react";
-import { ArrowLeft, FolderOpen, RotateCw, TriangleAlert } from "lucide-react";
+import { useMemo, useState } from "react";
+import { ArrowLeft, FolderOpen, Gamepad2, RotateCw, TriangleAlert } from "lucide-react";
 import { Button } from "../../components/Button";
 import { IconButton } from "../../components/IconButton";
 import type { Console } from "../../domain/console";
 import type { Game, LibraryScan } from "../../domain/game";
 import { ConsoleLogo } from "../catalog/ConsoleLogo";
+import { ControlsDialog } from "../controls/ControlsDialog";
 import { GameTile } from "./GameTile";
 import { useLibrary } from "./useLibrary";
 import { useRunningGame } from "./useRunningGame";
@@ -19,6 +20,8 @@ interface ConsoleGamesPageProps {
 
 /** Jogos de um console encontrados na pasta da biblioteca. */
 export function ConsoleGamesPage({ console, onBack }: ConsoleGamesPageProps) {
+  const [controlsOpen, setControlsOpen] = useState(false);
+
   return (
     <main className={styles.page}>
       <h1 className={styles.visuallyHidden}>{console.name}</h1>
@@ -26,6 +29,14 @@ export function ConsoleGamesPage({ console, onBack }: ConsoleGamesPageProps) {
         <div className={styles.toolbarActions}>
           <IconButton icon={ArrowLeft} label="Voltar para consoles" onClick={onBack} />
           {console.supported && <LibraryActions />}
+          {console.playable && (
+            <IconButton
+              icon={Gamepad2}
+              label="Configurar controles"
+              aria-haspopup="dialog"
+              onClick={() => setControlsOpen(true)}
+            />
+          )}
         </div>
         <div className={styles.consoleLogo}>
           <ConsoleLogo console={console} />
@@ -41,6 +52,8 @@ export function ConsoleGamesPage({ console, onBack }: ConsoleGamesPageProps) {
           </p>
         )}
       </div>
+
+      {controlsOpen && <ControlsDialog console={console} onClose={() => setControlsOpen(false)} />}
     </main>
   );
 }

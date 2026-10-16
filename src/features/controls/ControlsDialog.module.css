@@ -1,0 +1,60 @@
+.skeleton {
+  width: 100%;
+  aspect-ratio: 2;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-raised);
+  animation:
+    appear var(--duration-normal) var(--ease-out) var(--loading-delay) both,
+    pulse var(--duration-pulse) ease-in-out var(--loading-delay) infinite;
+}
+
+.failure {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-8) 0;
+  text-align: center;
+}
+
+.failureIcon {
+  width: var(--icon-lg);
+  height: var(--icon-lg);
+  color: var(--color-danger);
+}
+
+.failureText {
+  margin: 0;
+}
+
+/* Altura reservada: a mensagem não empurra o conteúdo ao aparecer. */
+.notice {
+  min-height: calc(var(--text-sm) * var(--leading-normal));
+  margin: var(--space-4) 0 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.error {
+  margin: var(--space-2) 0 0;
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+}
+
+@keyframes appear {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.6;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}

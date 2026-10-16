@@ -16,6 +16,8 @@ Gerado com a skill UI UX Pro Max (`--design-system "gaming emulator launcher dar
 - **Logos de consoles:** SVG vetoriais em `src/assets/consoles/` (fontes, licenças e tratamento em `SOURCES.md`), exibidos em cores originais. Para o fundo escuro, partes pretas/cinza-escuras foram convertidas para branco nos próprios arquivos (versão em negativo). Na grade, cada quadro mostra só o logo centralizado, numa caixa menor que o quadro (`--logo-inset-*`) para equilibrar wordmarks largos e logos quadrados.
 - **Carregamento:** listas usam skeleton com pulso; capas de jogos usam brilho diagonal (`--color-shimmer`). Ambos só aparecem após `--loading-delay` (sem piscar em respostas rápidas) e ficam estáticos com `prefers-reduced-motion`. A capa entra com fade quando termina de decodificar.
 - **Movimento:** durações curtas (120/200/320 ms), zeradas com `prefers-reduced-motion`.
+- **Diálogos:** `components/Dialog` (modal próprio, já que o `<dialog>` nativo não é suportado no jsdom dos testes): fundo `--color-backdrop`, foco preso dentro, Esc ou clique fora fecham e o foco volta a quem abriu.
+- **Controles:** o controle de cada console é desenhado em SVG com os tokens `--color-controller-*`, e cada tecla é um botão (chip) sobre o botão desenhado. A troca é salva na hora e, se a tecla já estiver em uso, as duas ações trocam de tecla.
 - **Foco:** contorno de 2px com `--color-focus-ring` em todo `:focus-visible`.
 - **Contraste:** texto principal `#E2E8F0` e secundário `#94A3B8` sobre `#0B0B14` passam de 4.5:1; texto sobre a primária usa branco.
 
