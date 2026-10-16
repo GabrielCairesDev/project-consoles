@@ -1,0 +1,14 @@
+[package]
+name = "psx"
+version = "0.1.0"
+description = "Núcleo do PlayStation (PS1) em safe Rust: CPU R3000A, GTE, GPU, SPU, CD-ROM e MDEC"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+chips = { path = "../chips" }
+
+[lints.rust]
+unsafe_code = "forbid"

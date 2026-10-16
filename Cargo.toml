@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["src-tauri", "crates/chips", "crates/sms", "crates/genesis", "crates/gameboy", "crates/player"]
+members = ["src-tauri", "crates/chips", "crates/sms", "crates/genesis", "crates/gameboy", "crates/psx", "crates/player"]
 
 [workspace.package]
 edition = "2024"
@@ -26,4 +26,7 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.gameboy]
+opt-level = 3
+
+[profile.dev.package.psx]
 opt-level = 3
