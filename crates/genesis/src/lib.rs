@@ -5,7 +5,8 @@
 //! núcleo do Master System.
 //!
 //! Escopo atual: NTSC, região exportação, 224 linhas, H32/H40, SRAM em
-//! 200000. O som FM (YM2612) ainda é mudo; entra na etapa 3.
+//! 200000, som estéreo (YM2612 + PSG). Fora: Sega CD, 32X, PAL, modo
+//! entrelaçado e SSG-EG do YM2612.
 
 mod bus;
 pub mod io;
@@ -34,6 +35,8 @@ pub const FRAME_RATE: f64 =
     MASTER_CLOCK as f64 / (MCLK_PER_LINE as f64 * vdp::LINES_PER_FRAME as f64);
 /// Parte da linha antes do desenho (H-blank), em master clocks.
 const HBLANK_MCLK: u32 = 600;
+/// Volume do PSG em relação ao FM na mistura.
+const PSG_GAIN: f32 = 0.35;
 /// Linha em que o V-int acontece (início do V-blank).
 const VBLANK_LINE: u16 = vdp::HEIGHT as u16;
 
@@ -75,6 +78,10 @@ pub struct Console {
     /// Estado anterior do RESET do Z80, para reiniciá-lo na borda.
     z80_was_reset: bool,
     rom_hash: u64,
+    /// Amostras ainda não misturadas (PSG mono, FM estéreo); não vão para
+    /// o estado salvo.
+    psg_pending: Vec<f32>,
+    fm_pending: Vec<f32>,
 }
 
 impl Console {
@@ -82,7 +89,11 @@ impl Console {
     pub fn new(rom: Vec<u8>, sample_rate: u32) -> Result<Self, RomError> {
         let rom = normalize_rom(rom)?;
         let rom_hash = state::rom_hash(&rom);
-        let mut bus = System::new(rom, Psg::new(Z80_CLOCK, sample_rate), Ym2612::new());
+        let mut bus = System::new(
+            rom,
+            Psg::new(Z80_CLOCK, sample_rate),
+            Ym2612::new(sample_rate),
+        );
         let mut cpu = m68k::Cpu::new();
         cpu.reset(&mut bus);
         Ok(Self {
@@ -93,6 +104,8 @@ impl Console {
             z80_clock: 0,
             z80_was_reset: true,
             rom_hash,
+            psg_pending: Vec::new(),
+            fm_pending: Vec::new(),
         })
     }
 
@@ -143,6 +156,8 @@ impl Console {
                 (self.z80_clock as u32).div_ceil(MCLK_PER_Z80)
             };
             psg_cycles += cycles;
+            // O YM2612 avança junto com o Z80, para ouvir cada escrita no DAC.
+            self.bus.ym.run(cycles * MCLK_PER_Z80);
             self.z80_clock -= i64::from(cycles * MCLK_PER_Z80);
         }
         self.bus.psg.run(psg_cycles);
@@ -160,9 +175,25 @@ impl Console {
         self.bus.vdp.frame_size()
     }
 
-    /// Move o áudio gerado para `out` (mono por enquanto: só o PSG).
+    /// Move o áudio gerado para `out`: estéreo intercalado (L, R), FM e PSG
+    /// misturados, valores em -1..1 (com o nível DC do PSG).
     pub fn drain_audio(&mut self, out: &mut Vec<f32>) {
-        self.bus.psg.drain(out);
+        self.bus.psg.drain(&mut self.psg_pending);
+        self.bus.ym.drain(&mut self.fm_pending);
+        let frames = self.psg_pending.len().min(self.fm_pending.len() / 2);
+        out.reserve(frames * 2);
+        for (psg, fm) in self
+            .psg_pending
+            .iter()
+            .zip(self.fm_pending.chunks_exact(2))
+            .take(frames)
+        {
+            let p = psg * PSG_GAIN;
+            out.push((fm[0] + p).clamp(-1.0, 1.0));
+            out.push((fm[1] + p).clamp(-1.0, 1.0));
+        }
+        self.psg_pending.drain(..frames);
+        self.fm_pending.drain(..frames * 2);
     }
 
     pub fn set_input(&mut self, pad: Pad) {

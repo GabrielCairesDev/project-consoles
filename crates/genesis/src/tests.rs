@@ -92,8 +92,9 @@ fn frame_produces_psg_audio() {
     console.run_frame();
     let mut audio = Vec::new();
     console.drain_audio(&mut audio);
-    let expected = (48_000.0 / FRAME_RATE) as usize;
-    assert!(audio.len().abs_diff(expected) <= 3, "{}", audio.len());
+    // Estéreo: dois valores por amostra.
+    let expected = (48_000.0 / FRAME_RATE) as usize * 2;
+    assert!(audio.len().abs_diff(expected) <= 6, "{}", audio.len());
 }
 
 #[test]

@@ -3,7 +3,7 @@ use crate::m68k::Bus as _;
 use chips::z80::Bus as _;
 
 fn system_with_rom(rom: Vec<u8>) -> System {
-    System::new(rom, Psg::new(3_579_545, 44_100), Ym2612::new())
+    System::new(rom, Psg::new(3_579_545, 44_100), Ym2612::new(44_100))
 }
 
 fn rom_with_sram(size: usize) -> Vec<u8> {
