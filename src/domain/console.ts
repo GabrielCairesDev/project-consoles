@@ -13,21 +13,6 @@ export interface Console {
   supported: boolean;
 }
 
-export type SortOrder = "year" | "popularity";
-
-/**
- * Retorna uma cópia ordenada:
- * - `year`: lançamento mais antigo primeiro;
- * - `popularity`: mais vendido primeiro, empates pelo lançamento mais antigo.
- * A ordenação é estável: empates completos preservam a ordem recebida.
- */
-export function sortConsoles(consoles: readonly Console[], order: SortOrder): Console[] {
-  const byYear = (a: Console, b: Console) => a.releaseYear - b.releaseYear;
-  const compare =
-    order === "year" ? byYear : (a: Console, b: Console) => b.unitsSold - a.unitsSold || byYear(a, b);
-  return [...consoles].sort(compare);
-}
-
 export interface DecadeGroup {
   /** Primeiro ano da década (ex.: 1980). */
   decade: number;

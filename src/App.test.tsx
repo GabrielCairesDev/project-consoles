@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import type { Console } from "./domain/console";
@@ -66,5 +66,32 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "Game Boy, 1 jogo" })).toBeInTheDocument();
     // Console sem jogos fica sem contagem.
     expect(screen.getByRole("button", { name: "PlayStation" })).toBeInTheDocument();
+  });
+
+  it("mostra indicador no card enquanto a biblioteca é varrida", async () => {
+    vi.mocked(fetchConsoles).mockResolvedValue([
+      { ...CONSOLES[0], id: "snes", name: "Super Famicom / SNES", supported: true },
+      CONSOLES[0],
+    ]);
+    vi.mocked(getLibraryDir).mockResolvedValue("/Jogos");
+    let finish!: (scan: Awaited<ReturnType<typeof scanLibrary>>) => void;
+    vi.mocked(scanLibrary).mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    render(<App />);
+
+    const snes = await screen.findByRole("button", { name: "Super Famicom / SNES" });
+    await waitFor(() => expect(snes).toHaveAttribute("aria-busy", "true"));
+    // Console sem reconhecimento não espera contagem.
+    expect(screen.getByRole("button", { name: "PlayStation" })).not.toHaveAttribute("aria-busy");
+
+    await act(async () => {
+      finish({
+        folder: "/Jogos",
+        games: [{ id: "a", consoleId: "snes", title: "A", fileName: "a", recognized: true }],
+      });
+    });
+
+    const done = screen.getByRole("button", { name: "Super Famicom / SNES, 1 jogo" });
+    expect(done).not.toHaveAttribute("aria-busy");
+    expect(done).toHaveTextContent(/^1$/);
   });
 });

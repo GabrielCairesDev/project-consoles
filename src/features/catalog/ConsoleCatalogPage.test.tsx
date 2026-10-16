@@ -94,6 +94,15 @@ describe("ConsoleCatalogPage", () => {
     expect(within(eighties).getByRole("img", { name: "Game Boy" })).toBeInTheDocument();
   });
 
+  it("ordena sempre por ano, sem seletor de ordenação", async () => {
+    fetchMock.mockResolvedValue([CONSOLES[2], CONSOLES[0], CONSOLES[1]]);
+    render(<ConsoleCatalogPage onSelect={noop} />);
+    await screen.findByRole("region", { name: "Anos 1980" });
+
+    expect(gridOrder()).toEqual(["Master System", "Game Boy", "PlayStation 2"]);
+    expect(screen.queryByRole("radio")).toBeNull();
+  });
+
   it("agrupa por década sem exibir a contagem de consoles", async () => {
     fetchMock.mockResolvedValue(CONSOLES);
     render(<ConsoleCatalogPage onSelect={noop} />);
@@ -106,30 +115,7 @@ describe("ConsoleCatalogPage", () => {
     expect(screen.queryByText(/\d+ consoles?$/)).toBeNull();
   });
 
-  it("ordena por popularidade numa sequência única, mais vendido primeiro", async () => {
-    fetchMock.mockResolvedValue(CONSOLES);
-    render(<ConsoleCatalogPage onSelect={noop} />);
-    await screen.findByRole("region", { name: "Anos 1980" });
-    expect(gridOrder()).toEqual(["Master System", "Game Boy", "PlayStation 2"]);
 
-    fireEvent.click(screen.getByRole("radio", { name: "Popularidade" }));
-
-    expect(screen.getByRole("radio", { name: "Popularidade" })).toBeChecked();
-    expect(screen.queryByRole("region", { name: "Anos 1980" })).toBeNull();
-    expect(gridOrder()).toEqual(["PlayStation 2", "Game Boy", "Master System"]);
-  });
-
-  it("oferece só ordenação, sem alternar modo de exibição", async () => {
-    fetchMock.mockResolvedValue(CONSOLES);
-    render(<ConsoleCatalogPage onSelect={noop} />);
-    await screen.findByRole("region", { name: "Anos 1980" });
-
-    expect(screen.getAllByRole("radio").map((r) => r.getAttribute("value"))).toEqual([
-      "year",
-      "popularity",
-    ]);
-    expect(screen.queryByRole("group", { name: "Exibir" })).toBeNull();
-  });
 
 
   it("cada quadro é um botão nomeado pelo console que abre seus jogos", async () => {

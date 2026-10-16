@@ -131,12 +131,18 @@ export function useLibrary(): LibraryContextValue {
 
 const NO_COUNTS: ReadonlyMap<string, number> = new Map();
 
-/**
- * Jogos encontrados por console. Vazio enquanto a biblioteca não foi varrida
- * ou fora de um `<LibraryProvider>`.
- */
-export function useGameCounts(): ReadonlyMap<string, number> {
-  const scan = useContext(LibraryContext)?.state;
-  const games = scan?.status === "ready" ? scan.scan.games : null;
-  return useMemo(() => (games ? countGamesByConsole(games) : NO_COUNTS), [games]);
+export interface GameCounts {
+  /** Jogos encontrados por console; vazio até a varredura terminar. */
+  counts: ReadonlyMap<string, number>;
+  /** A biblioteca ainda está sendo lida ou varrida. */
+  loading: boolean;
+}
+
+/** Contagem de jogos por console. Fora de um `<LibraryProvider>`, vazia. */
+export function useGameCounts(): GameCounts {
+  const state = useContext(LibraryContext)?.state;
+  const games = state?.status === "ready" ? state.scan.games : null;
+  const loading = state?.status === "loading" || state?.status === "scanning";
+  const counts = useMemo(() => (games ? countGamesByConsole(games) : NO_COUNTS), [games]);
+  return { counts, loading };
 }

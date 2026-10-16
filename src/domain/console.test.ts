@@ -3,7 +3,6 @@ import {
   type Console,
   decadeLabel,
   groupByDecade,
-  sortConsoles,
 } from "./console";
 
 function make(id: string, releaseYear: number, unitsSold = 1_000_000): Console {
@@ -11,34 +10,6 @@ function make(id: string, releaseYear: number, unitsSold = 1_000_000): Console {
 }
 
 const ids = (consoles: readonly Console[]) => consoles.map((c) => c.id);
-
-describe("sortConsoles", () => {
-  const input = [make("b", 2000, 50), make("a", 1990, 10), make("c", 2010, 50)];
-
-  it("por ano: mais antigo primeiro", () => {
-    expect(ids(sortConsoles(input, "year"))).toEqual(["a", "b", "c"]);
-  });
-
-  it("por popularidade: mais vendido primeiro, empate pelo mais antigo", () => {
-    expect(ids(sortConsoles(input, "popularity"))).toEqual(["b", "c", "a"]);
-  });
-
-  it("é estável em empates completos", () => {
-    const tied = [make("x", 2000, 5), make("y", 2000, 5)];
-    expect(ids(sortConsoles(tied, "popularity"))).toEqual(["x", "y"]);
-    expect(ids(sortConsoles(tied, "year"))).toEqual(["x", "y"]);
-  });
-
-  it("não altera o array recebido", () => {
-    const copy = [...input];
-    sortConsoles(input, "popularity");
-    expect(input).toEqual(copy);
-  });
-
-  it("aceita lista vazia", () => {
-    expect(sortConsoles([], "year")).toEqual([]);
-  });
-});
 
 describe("groupByDecade", () => {
   it("retorna lista vazia para entrada vazia", () => {

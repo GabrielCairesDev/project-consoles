@@ -45,9 +45,13 @@
   position: absolute;
   top: var(--space-2);
   right: var(--space-2);
+  /* Altura fixa: o selo não muda de tamanho ao trocar o indicador pelo número. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
   min-width: var(--count-badge-size);
-  padding: var(--space-1) var(--space-2);
-  text-align: center;
+  height: var(--count-badge-size);
+  padding: 0 var(--space-2);
   border-radius: var(--radius-full);
   background: var(--color-surface-raised);
   color: var(--color-text);
@@ -55,4 +59,34 @@
   font-weight: var(--font-weight-semibold);
   line-height: var(--leading-tight);
   font-variant-numeric: tabular-nums;
+}
+
+/* Enquanto a biblioteca é varrida: selo com ícone girando no lugar do número. */
+.count[data-loading] {
+  color: var(--color-secondary);
+  animation: appear var(--duration-normal) var(--ease-out) var(--loading-delay) both;
+}
+
+.spinner {
+  width: var(--icon-xs);
+  height: var(--icon-xs);
+  animation: spin var(--duration-spin) linear infinite;
+}
+
+@keyframes appear {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
 }

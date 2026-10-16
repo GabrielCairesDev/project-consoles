@@ -72,6 +72,7 @@
   --shadow-md: 0 8px 24px rgb(0 0 0 / 0.45);
 
   /* Ícones */
+  --icon-xs: 12px;
   --icon-sm: 16px;
   --icon-md: 20px;
   --icon-lg: 32px;
@@ -82,6 +83,7 @@
   --duration-slow: 320ms;
   --duration-pulse: 1.6s;
   --duration-shimmer: 1.4s;
+  --duration-spin: 0.9s;
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 
   /* Logos de consoles: caixa interna do quadro da grade. */

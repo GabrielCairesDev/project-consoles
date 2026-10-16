@@ -1,36 +1,19 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { RotateCw, TriangleAlert } from "lucide-react";
 import { Button } from "../../components/Button";
-import { SegmentedControl, type SegmentedOption } from "../../components/SegmentedControl";
-import {
-  type Console,
-  type SortOrder,
-  decadeLabel,
-  groupByDecade,
-  sortConsoles,
-} from "../../domain/console";
+import { type Console, decadeLabel, groupByDecade } from "../../domain/console";
 import { ConsoleCollection } from "./ConsoleCollection";
 import { useConsoles } from "./useConsoles";
 import styles from "./ConsoleCatalogPage.module.css";
 
 const SKELETON_TILES = 12;
 
-const SORT_OPTIONS: readonly SegmentedOption<SortOrder>[] = [
-  { value: "year", label: "Ano" },
-  { value: "popularity", label: "Popularidade" },
-];
-
 export function ConsoleCatalogPage({ onSelect }: { onSelect: (console: Console) => void }) {
   const { state, retry } = useConsoles();
-  const [sort, setSort] = useState<SortOrder>("year");
 
   return (
     <main className={styles.page}>
       <h1 className={styles.visuallyHidden}>Consoles</h1>
-
-      <div className={styles.toolbar}>
-        <SegmentedControl label="Ordenar" options={SORT_OPTIONS} value={sort} onChange={setSort} />
-      </div>
 
       <div className={styles.content}>
         {state.status === "loading" && <LoadingState />}
@@ -39,7 +22,7 @@ export function ConsoleCatalogPage({ onSelect }: { onSelect: (console: Console) 
           (state.consoles.length === 0 ? (
             <p className={styles.message}>Nenhum console encontrado no catálogo.</p>
           ) : (
-            <Catalog consoles={state.consoles} sort={sort} onSelect={onSelect} />
+            <Catalog consoles={state.consoles} onSelect={onSelect} />
           ))}
       </div>
     </main>
@@ -48,22 +31,12 @@ export function ConsoleCatalogPage({ onSelect }: { onSelect: (console: Console) 
 
 interface CatalogProps {
   consoles: Console[];
-  sort: SortOrder;
   onSelect: (console: Console) => void;
 }
 
-function Catalog({ consoles, sort, onSelect }: CatalogProps) {
-  const sorted = useMemo(() => sortConsoles(consoles, sort), [consoles, sort]);
-  const decades = useMemo(() => (sort === "year" ? groupByDecade(sorted) : null), [sorted, sort]);
-
-  // Por popularidade, a posição no ranking importa mais que a década.
-  if (!decades) {
-    return (
-      <section aria-label="Consoles por popularidade">
-        <ConsoleCollection consoles={sorted} onSelect={onSelect} />
-      </section>
-    );
-  }
+/** Consoles sempre em ordem de lançamento, agrupados por década. */
+function Catalog({ consoles, onSelect }: CatalogProps) {
+  const decades = useMemo(() => groupByDecade(consoles), [consoles]);
 
   return (
     <div className={styles.decades}>

@@ -1,3 +1,4 @@
+import { LoaderCircle } from "lucide-react";
 import type { Console } from "../../domain/console";
 import { formatGameCount } from "../../domain/game";
 import { useGameCounts } from "../library/LibraryContext";
@@ -11,15 +12,18 @@ interface ConsoleCollectionProps {
 
 /**
  * Grade de consoles: cada quadro mostra o logo e, quando houver, quantos
- * jogos dele estão na biblioteca. Clicar abre os jogos do console.
+ * jogos dele estão na biblioteca (com indicador enquanto a biblioteca é
+ * varrida). Clicar abre os jogos do console.
  */
 export function ConsoleCollection({ consoles, onSelect }: ConsoleCollectionProps) {
-  const counts = useGameCounts();
+  const { counts, loading } = useGameCounts();
 
   return (
     <ul className={styles.grid}>
       {consoles.map((item) => {
         const count = counts.get(item.id) ?? 0;
+        // Só consoles reconhecíveis podem ter jogos; os demais não esperam nada.
+        const counting = loading && item.supported;
         return (
           <li key={item.id}>
             {/* Sem contagem, o nome acessível vem do `alt` do logo. */}
@@ -28,15 +32,22 @@ export function ConsoleCollection({ consoles, onSelect }: ConsoleCollectionProps
               className={styles.tile}
               onClick={() => onSelect(item)}
               aria-label={count > 0 ? `${item.name}, ${formatGameCount(count)}` : undefined}
+              aria-busy={counting || undefined}
             >
               <span className={styles.tileLogo}>
                 <ConsoleLogo console={item} />
               </span>
-              {count > 0 && (
-                // Visualmente só o número; o rótulo do botão diz "N jogos".
-                <span className={styles.count} aria-hidden="true">
-                  {count}
+              {counting ? (
+                <span className={styles.count} data-loading aria-hidden="true">
+                  <LoaderCircle className={styles.spinner} />
                 </span>
+              ) : (
+                count > 0 && (
+                  // Visualmente só o número; o rótulo do botão diz "N jogos".
+                  <span className={styles.count} aria-hidden="true">
+                    {count}
+                  </span>
+                )
               )}
             </button>
           </li>
