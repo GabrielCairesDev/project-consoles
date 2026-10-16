@@ -8,6 +8,11 @@ export interface MenuItem {
   onSelect: () => void;
   /** Ação destrutiva: destacada com a cor de perigo. */
   danger?: boolean;
+  /**
+   * Indisponível: continua focável (o leitor de tela anuncia que existe),
+   * mas não executa nem fecha o menu.
+   */
+  disabled?: boolean;
 }
 
 interface MenuProps {
@@ -96,7 +101,7 @@ export function Menu({ label, items, open, onOpenChange, className }: MenuProps)
       </button>
       {open && (
         <div id={menuId} role="menu" aria-label={label} className={styles.menu}>
-          {items.map(({ label: itemLabel, icon: Icon, onSelect, danger }) => (
+          {items.map(({ label: itemLabel, icon: Icon, onSelect, danger, disabled }) => (
             <button
               key={itemLabel}
               type="button"
@@ -104,7 +109,9 @@ export function Menu({ label, items, open, onOpenChange, className }: MenuProps)
               tabIndex={-1}
               className={styles.item}
               data-danger={danger || undefined}
+              aria-disabled={disabled || undefined}
               onClick={() => {
+                if (disabled) return;
                 close(true);
                 onSelect();
               }}

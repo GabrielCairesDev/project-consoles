@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import {
   ArrowLeft,
+  CircleCheck,
   FolderOpen,
   Gamepad2,
   RotateCcw,
@@ -19,6 +20,7 @@ import { SettingsDialog } from "../settings/SettingsDialog";
 import { useConsoleSettings } from "../settings/useConsoleSettings";
 import { GameTile } from "./GameTile";
 import { useLibrary } from "./useLibrary";
+import { useGameSaveTransfer } from "./useGameSaveTransfer";
 import { useRunningGame } from "./useRunningGame";
 import styles from "./ConsoleGamesPage.module.css";
 
@@ -225,6 +227,7 @@ function PlayableGames({
   resume: boolean;
 }) {
   const running = useRunningGame(games);
+  const transfer = useGameSaveTransfer(running.markGameSave);
   const busy = running.gameId !== null;
   const [confirmRestart, setConfirmRestart] = useState<Game | null>(null);
 
@@ -235,6 +238,19 @@ function PlayableGames({
           {running.error}
         </p>
       )}
+      {transfer.notice?.kind === "error" && (
+        <p className={styles.inlineError} role="alert">
+          {transfer.notice.message}
+        </p>
+      )}
+      <p className={styles.inlineNotice} role="status">
+        {transfer.notice?.kind === "success" && (
+          <>
+            <CircleCheck className={styles.noticeIcon} aria-hidden="true" />
+            {transfer.notice.message}
+          </>
+        )}
+      </p>
       <ul className={styles.grid} aria-label="Jogos">
         {games.map((game) => {
           const current = running.gameId === game.id;
@@ -252,6 +268,9 @@ function PlayableGames({
                   hasSave: resume && running.hasSave(game),
                   onPlay: () => running.launch(game.id),
                   onRestart: () => setConfirmRestart(game),
+                  hasGameSave: running.hasGameSave(game),
+                  onExportSave: () => transfer.exportSave(game),
+                  onImportSave: () => transfer.importSave(game),
                 }}
               />
             </li>

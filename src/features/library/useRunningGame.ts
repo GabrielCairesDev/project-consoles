@@ -15,6 +15,10 @@ export interface RunningGame {
   restart: (gameId: string) => void;
   /** Se o jogo tem progresso salvo, considerando o que mudou nesta sessão. */
   hasSave: (game: Game) => boolean;
+  /** Se o jogo tem save próprio (`.sav`), considerando o que mudou nesta sessão. */
+  hasGameSave: (game: Game) => boolean;
+  /** Anota que o jogo passou a ter save próprio (ex.: depois de importar). */
+  markGameSave: (gameId: string) => void;
 }
 
 interface State {
@@ -25,10 +29,12 @@ interface State {
 
 const IDLE: State = { gameId: null, launching: false, error: null };
 
-/** Progresso salvo alterado desde a varredura `source` (fechar ou recomeçar). */
+type SaveFlags = Partial<Pick<Game, "hasSave" | "hasGameSave">>;
+
+/** Saves alterados desde a varredura `source` (fechar, recomeçar ou importar). */
 interface SaveOverrides {
   source: readonly Game[];
-  values: ReadonlyMap<string, boolean>;
+  values: ReadonlyMap<string, SaveFlags>;
 }
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -50,11 +56,11 @@ export function useRunningGame(games: readonly Game[]): RunningGame {
   const currentGames = useRef(games);
   currentGames.current = games;
 
-  const setSave = useCallback((gameId: string, saved: boolean) => {
+  const setSave = useCallback((gameId: string, flags: SaveFlags) => {
     setSaves((current) => {
       const source = currentGames.current;
       const values = new Map(current.source === source ? current.values : []);
-      values.set(gameId, saved);
+      values.set(gameId, { ...values.get(gameId), ...flags });
       return { source, values };
     });
   }, []);
@@ -62,8 +68,8 @@ export function useRunningGame(games: readonly Game[]): RunningGame {
   useEffect(() => {
     let active = true;
     let unlisten: (() => void) | null = null;
-    onGameExited(({ gameId, hasSave }) => {
-      setSave(gameId, hasSave);
+    onGameExited(({ gameId, hasSave, hasGameSave }) => {
+      setSave(gameId, { hasSave, hasGameSave });
       setState((current) => (current.gameId === gameId ? IDLE : current));
     }).then(
       (stop) => {
@@ -102,13 +108,24 @@ export function useRunningGame(games: readonly Game[]): RunningGame {
     (gameId: string) =>
       start(gameId, async () => {
         await deleteSave(gameId);
-        setSave(gameId, false);
+        setSave(gameId, { hasSave: false });
       }),
     [start, setSave],
   );
 
   const overrides = saves.source === games ? saves.values : null;
-  const hasSave = useCallback((game: Game) => overrides?.get(game.id) ?? game.hasSave, [overrides]);
+  const hasSave = useCallback(
+    (game: Game) => overrides?.get(game.id)?.hasSave ?? game.hasSave,
+    [overrides],
+  );
+  const hasGameSave = useCallback(
+    (game: Game) => overrides?.get(game.id)?.hasGameSave ?? game.hasGameSave,
+    [overrides],
+  );
+  const markGameSave = useCallback(
+    (gameId: string) => setSave(gameId, { hasGameSave: true }),
+    [setSave],
+  );
 
-  return { ...state, launch, restart, hasSave };
+  return { ...state, launch, restart, hasSave, hasGameSave, markGameSave };
 }

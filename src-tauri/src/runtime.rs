@@ -211,7 +211,7 @@ impl Runner {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::mpsc;
     use std::time::Duration;
@@ -234,13 +234,14 @@ mod tests {
             file_name: "rom.sms".to_owned(),
             recognized: false,
             has_save: false,
+            has_game_save: false,
             path,
             no_intro_name: None,
         }
     }
 
     /// Processo que sai com `code` depois de ~`seconds` segundos.
-    fn fake_process(code: i32, seconds: u32) -> Runner {
+    pub(crate) fn fake_process(code: i32, seconds: u32) -> Runner {
         Runner::with_command(move |_rom, _options| {
             #[cfg(windows)]
             let command = {

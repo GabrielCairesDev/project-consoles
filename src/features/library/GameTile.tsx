@@ -1,6 +1,6 @@
 import { useCallback, useId, useRef, useState } from "react";
-import { CircleHelp, History, LoaderCircle, Play, RotateCcw } from "lucide-react";
-import { Menu } from "../../components/Menu";
+import { CircleHelp, Download, History, LoaderCircle, Play, RotateCcw, Upload } from "lucide-react";
+import { Menu, type MenuItem } from "../../components/Menu";
 import type { Game } from "../../domain/game";
 import { useCover } from "./useCover";
 import styles from "./GameTile.module.css";
@@ -16,6 +16,10 @@ export interface GameTilePlay {
   onPlay: () => void;
   /** Pede para recomeçar do início (o chamador confirma e apaga o progresso). */
   onRestart: () => void;
+  /** Há save do próprio jogo: habilita "Exportar save". */
+  hasGameSave: boolean;
+  onExportSave: () => void;
+  onImportSave: () => void;
 }
 
 interface GameTileProps {
@@ -88,7 +92,20 @@ export function GameTile({ game, play }: GameTileProps) {
   }
 
   const active = play.status !== "idle";
-  const showMenu = play.hasSave && !active && !play.disabled;
+  const showMenu = !active && !play.disabled;
+  const menuItems: MenuItem[] = [
+    { label: play.hasSave ? "Continuar" : "Jogar", icon: Play, onSelect: play.onPlay },
+    ...(play.hasSave
+      ? [{ label: "Recomeçar do início", icon: RotateCcw, onSelect: play.onRestart, danger: true }]
+      : []),
+    {
+      label: "Exportar save",
+      icon: Upload,
+      onSelect: play.onExportSave,
+      disabled: !play.hasGameSave,
+    },
+    { label: "Importar save", icon: Download, onSelect: play.onImportSave },
+  ];
   return (
     <div className={styles.slot}>
       <button
@@ -115,10 +132,7 @@ export function GameTile({ game, play }: GameTileProps) {
           label={`Opções de ${game.title}`}
           open={menuOpen}
           onOpenChange={setMenuOpen}
-          items={[
-            { label: "Continuar", icon: Play, onSelect: play.onPlay },
-            { label: "Recomeçar do início", icon: RotateCcw, onSelect: play.onRestart, danger: true },
-          ]}
+          items={menuItems}
         />
       )}
     </div>

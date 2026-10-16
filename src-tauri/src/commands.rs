@@ -2,7 +2,7 @@
 //! `spawn_blocking`, fora da thread da interface.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use player::controls::{Bindings, SUPPORTED_KEYS, System};
@@ -154,6 +154,7 @@ pub async fn scan_library(state: State<'_, Arc<AppState>>) -> CommandResult<Libr
         let mut games = games;
         for game in &mut games {
             game.has_save = state.saves.exists(game);
+            game.has_game_save = state.saves.battery_exists(game);
         }
         *lock(&state.games) = games.iter().map(|g| (g.id.clone(), g.clone())).collect();
         Ok(LibraryScan { folder, games })
@@ -195,6 +196,8 @@ pub struct GameExited {
     code: Option<i32>,
     /// O jogo deixou progresso salvo para continuar.
     has_save: bool,
+    /// O jogo tem save próprio (`.sav`).
+    has_game_save: bool,
 }
 
 /// Inicia um jogo da última varredura em um processo separado.
@@ -237,11 +240,11 @@ pub async fn launch_game(
         state
             .runner
             .launch(&game, &options, move |code| {
-                let has_save = watcher.saves.exists(&exited);
                 let payload = GameExited {
                     game_id,
                     code,
-                    has_save,
+                    has_save: watcher.saves.exists(&exited),
+                    has_game_save: watcher.saves.battery_exists(&exited),
                 };
                 if let Err(error) = app.emit("game-exited", payload) {
                     eprintln!("não foi possível avisar o fim do jogo: {error}");
@@ -347,6 +350,63 @@ pub async fn delete_save(game_id: String, state: State<'_, Arc<AppState>>) -> Co
     .map_err(|error| format!("Falha interna: {error}"))?
 }
 
+fn find_game(state: &AppState, game_id: &str) -> CommandResult<Game> {
+    lock(&state.games)
+        .get(game_id)
+        .cloned()
+        .ok_or_else(|| "Jogo não encontrado; atualize a biblioteca.".to_owned())
+}
+
+/// Copia o save do próprio jogo (`.sav` bruto, o conteúdo da RAM do
+/// cartucho) para `destination`, escolhido pelo usuário.
+#[tauri::command]
+pub async fn export_game_save(
+    game_id: String,
+    destination: PathBuf,
+    state: State<'_, Arc<AppState>>,
+) -> CommandResult<()> {
+    let game = find_game(&state, &game_id)?;
+    let state = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || {
+        state
+            .saves
+            .export_battery(&game, &destination)
+            .map_err(|error| format!("Não foi possível exportar o save: {error}."))
+    })
+    .await
+    .map_err(|error| format!("Falha interna: {error}"))?
+}
+
+/// Instala `source` como save do próprio jogo, depois de conferir com o
+/// cartucho (mesma regra do jogo ao carregar). Recusado, o save atual fica
+/// intacto. Com o jogo aberto não importa: ao fechar, ele gravaria por cima.
+#[tauri::command]
+pub async fn import_game_save(
+    game_id: String,
+    source: PathBuf,
+    state: State<'_, Arc<AppState>>,
+) -> CommandResult<()> {
+    let state = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || import_save(&state, &game_id, &source))
+        .await
+        .map_err(|error| format!("Falha interna: {error}"))?
+}
+
+fn import_save(state: &AppState, game_id: &str, source: &Path) -> CommandResult<()> {
+    let game = find_game(state, game_id)?;
+    let system = runtime::system_for(&game.console_id)
+        .ok_or_else(|| "Este console ainda não tem saves de jogo.".to_owned())?;
+    if state.runner.is_running() {
+        return Err("Feche o jogo em execução antes de importar um save.".to_owned());
+    }
+    state
+        .saves
+        .import_battery(&game, source, |bytes| {
+            player::check_battery_save(&game.path, system, bytes).map_err(|error| error.to_string())
+        })
+        .map_err(|error| format!("Save não importado: {error}."))
+}
+
 /// Opções de jogo do console (ex.: continuar de onde parou).
 #[tauri::command]
 pub fn get_console_settings(
@@ -378,4 +438,244 @@ pub async fn set_console_settings(
     })
     .await
     .map_err(|error| format!("Falha interna: {error}"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    use crate::runtime::tests::fake_process;
+
+    /// Um cartucho com save de cada console: ROM mínima, tamanho do `.sav`
+    /// e um tamanho que o cartucho não aceita.
+    struct Cartridge {
+        console_id: &'static str,
+        file_name: &'static str,
+        rom: Vec<u8>,
+        save_size: usize,
+        wrong_size: usize,
+    }
+
+    fn cartridges() -> Vec<Cartridge> {
+        let mut game_boy = vec![0; 0x8000];
+        game_boy[0x147] = 0x03; // MBC1 + RAM + bateria
+        game_boy[0x149] = 0x02; // 8 KB
+        let mut genesis = vec![0; 0x400];
+        genesis[0x1B0..0x1B2].copy_from_slice(b"RA");
+        vec![
+            Cartridge {
+                console_id: "game-boy",
+                file_name: "Pokemon Red.gb",
+                rom: game_boy,
+                save_size: 0x2000,
+                wrong_size: 0x8000,
+            },
+            Cartridge {
+                console_id: "mega-drive",
+                file_name: "Phantasy Star II.md",
+                rom: genesis,
+                save_size: 0x1_0000,
+                wrong_size: 0x2000,
+            },
+            Cartridge {
+                console_id: "master-system",
+                file_name: "Phantasy Star.sms",
+                rom: vec![0x18, 0xFE],
+                save_size: 0x8000,
+                wrong_size: 0x6000,
+            },
+        ]
+    }
+
+    fn state_with(dir: &Path, cart: &Cartridge, runner: Runner) -> (AppState, Game) {
+        let rom_path = dir.join(cart.file_name);
+        fs::write(&rom_path, &cart.rom).expect("ROM");
+        let game = Game {
+            id: cart.file_name.to_owned(),
+            console_id: cart.console_id.to_owned(),
+            title: cart.file_name.to_owned(),
+            file_name: cart.file_name.to_owned(),
+            recognized: false,
+            has_save: false,
+            has_game_save: false,
+            path: rom_path,
+            no_intro_name: None,
+        };
+        let mut state = AppState::new(dir.join("config"), dir.join("data"), dir.join("cache"));
+        state.runner = runner;
+        lock(&state.games).insert(game.id.clone(), game.clone());
+        (state, game)
+    }
+
+    fn write(dir: &Path, name: &str, bytes: &[u8]) -> PathBuf {
+        let path = dir.join(name);
+        fs::write(&path, bytes).expect("escrita");
+        path
+    }
+
+    #[test]
+    fn game_save_exports_and_imports_on_every_console() {
+        for cart in cartridges() {
+            let dir = tempfile::tempdir().expect("pasta");
+            let (state, game) = state_with(dir.path(), &cart, Runner::default());
+            let console = cart.console_id;
+            let installed = state.saves.battery_path_for(&game);
+            assert!(
+                installed.starts_with(dir.path().join("data/saves").join(console)),
+                "pasta própria do console: {}",
+                installed.display()
+            );
+
+            // Save de outro emulador entra pelo import.
+            let foreign = write(dir.path(), "de-fora.sav", &vec![0x11; cart.save_size]);
+            import_save(&state, &game.id, &foreign).expect(console);
+            assert!(state.saves.battery_exists(&game), "{console}");
+
+            // E sai igual, byte a byte, pelo export.
+            let exported = dir.path().join("backup").join("exportado.sav");
+            state.saves.export_battery(&game, &exported).expect(console);
+            assert_eq!(
+                fs::read(&exported).expect("leitura"),
+                vec![0x11; cart.save_size],
+                "{console}"
+            );
+
+            // O exportado volta a ser aceito pelo mesmo jogo.
+            fs::remove_file(&installed).expect("remove");
+            import_save(&state, &game.id, &exported).expect(console);
+            assert_eq!(
+                fs::read(&installed).expect("leitura"),
+                vec![0x11; cart.save_size]
+            );
+        }
+    }
+
+    #[test]
+    fn restart_keeps_game_save_on_every_console() {
+        for cart in cartridges() {
+            let dir = tempfile::tempdir().expect("pasta");
+            let (state, game) = state_with(dir.path(), &cart, Runner::default());
+            let source = write(dir.path(), "save.sav", &vec![0x22; cart.save_size]);
+            import_save(&state, &game.id, &source).expect(cart.console_id);
+            let resume = state.saves.path_for(&game);
+            fs::write(&resume, b"estado").expect("estado");
+
+            // O mesmo que `delete_save` ("Recomeçar do início") faz.
+            state.saves.delete(&game).expect("recomeçar");
+
+            assert!(!resume.exists(), "{}", cart.console_id);
+            assert_eq!(
+                fs::read(state.saves.battery_path_for(&game)).expect("save mantido"),
+                vec![0x22; cart.save_size],
+                "{}",
+                cart.console_id
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_import_keeps_existing_save_on_every_console() {
+        for cart in cartridges() {
+            let dir = tempfile::tempdir().expect("pasta");
+            let (state, game) = state_with(dir.path(), &cart, Runner::default());
+            let console = cart.console_id;
+            let good = write(dir.path(), "bom.sav", &vec![0x5A; cart.save_size]);
+            import_save(&state, &game.id, &good).expect(console);
+            let installed = state.saves.battery_path_for(&game);
+
+            let wrong = write(dir.path(), "errado.sav", &vec![1; cart.wrong_size]);
+            let error = import_save(&state, &game.id, &wrong).expect_err(console);
+            assert!(error.contains("bytes"), "{console}: {error}");
+
+            let empty = write(dir.path(), "vazio.sav", &[]);
+            assert!(import_save(&state, &game.id, &empty).is_err(), "{console}");
+
+            let huge = write(dir.path(), "enorme.sav", &vec![0; 1024 * 1024]);
+            let error = import_save(&state, &game.id, &huge).expect_err(console);
+            assert!(error.contains("grande demais"), "{console}: {error}");
+
+            let missing = dir.path().join("nao-existe.sav");
+            assert!(
+                import_save(&state, &game.id, &missing).is_err(),
+                "{console}"
+            );
+
+            assert_eq!(
+                fs::read(&installed).expect("leitura"),
+                vec![0x5A; cart.save_size],
+                "{console}: save existente intacto"
+            );
+            assert!(!installed.with_extension("sav.tmp").exists(), "{console}");
+        }
+    }
+
+    #[test]
+    fn master_system_import_accepts_8_16_and_32_kb() {
+        let cart = cartridges()
+            .into_iter()
+            .find(|c| c.console_id == "master-system")
+            .expect("SMS");
+        let dir = tempfile::tempdir().expect("pasta");
+        let (state, game) = state_with(dir.path(), &cart, Runner::default());
+        for size in [0x2000, 0x4000, 0x8000] {
+            let source = write(dir.path(), "sms.sav", &vec![0x7E; size]);
+            import_save(&state, &game.id, &source).expect("tamanho aceito");
+            // Fica como veio: o jogo completa o resto da RAM com zeros.
+            let installed = fs::read(state.saves.battery_path_for(&game)).expect("leitura");
+            assert_eq!(installed.len(), size);
+        }
+    }
+
+    #[test]
+    fn import_into_game_without_cartridge_save_is_refused() {
+        let cart = Cartridge {
+            console_id: "mega-drive",
+            file_name: "Sonic.md",
+            rom: vec![0; 0x400], // sem "RA": não há SRAM
+            save_size: 0,
+            wrong_size: 0,
+        };
+        let dir = tempfile::tempdir().expect("pasta");
+        let (state, game) = state_with(dir.path(), &cart, Runner::default());
+        let source = write(dir.path(), "x.sav", &[0; 0x1_0000]);
+        let error = import_save(&state, &game.id, &source).expect_err("recusa");
+        assert!(error.contains("não salva no cartucho"), "{error}");
+        assert!(!state.saves.battery_exists(&game));
+    }
+
+    #[test]
+    fn import_of_unknown_game_is_refused() {
+        let dir = tempfile::tempdir().expect("pasta");
+        let cart = cartridges().remove(0);
+        let (state, _) = state_with(dir.path(), &cart, Runner::default());
+        let source = write(dir.path(), "x.sav", &[0; 0x2000]);
+        assert!(import_save(&state, "nao-existe.gb", &source).is_err());
+    }
+
+    #[test]
+    fn import_is_refused_while_a_game_runs() {
+        let dir = tempfile::tempdir().expect("pasta");
+        let cart = cartridges().remove(0);
+        let (state, game) = state_with(dir.path(), &cart, fake_process(0, 5));
+        let good = write(dir.path(), "bom.sav", &[0x11; 0x2000]);
+        import_save(&state, &game.id, &good).expect("antes de abrir");
+        let options = LaunchOptions {
+            bindings: Bindings::defaults(System::GameBoy),
+            state_path: None,
+            battery_path: None,
+        };
+        state
+            .runner
+            .launch(&game, &options, |_| {})
+            .expect("jogo falso iniciado");
+
+        let other = write(dir.path(), "outro.sav", &[0x99; 0x2000]);
+        let error = import_save(&state, &game.id, &other).expect_err("recusa");
+        assert!(error.contains("Feche o jogo"), "{error}");
+        assert_eq!(
+            fs::read(state.saves.battery_path_for(&game)).expect("leitura"),
+            [0x11; 0x2000]
+        );
+    }
 }

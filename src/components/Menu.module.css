@@ -69,6 +69,15 @@
   background: var(--color-surface);
 }
 
+.item[aria-disabled="true"] {
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+.item[aria-disabled="true"]:hover:not(:focus-visible) {
+  background: transparent;
+}
+
 .item[data-danger] {
   color: var(--color-danger);
 }

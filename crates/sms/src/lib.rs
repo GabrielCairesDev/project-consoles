@@ -168,6 +168,19 @@ impl Console {
         Ok(())
     }
 
+    /// RAM do cartucho (o save do próprio jogo), depois que o jogo a usou.
+    /// O Master System não declara bateria no cabeçalho: um jogo que nunca
+    /// grava na RAM do cartucho não tem save.
+    pub fn battery_ram(&self) -> Option<&[u8]> {
+        self.bus.cart_ram()
+    }
+
+    /// Carrega o save do jogo (8, 16 ou 32 KB); outro tamanho é recusado
+    /// (`false`) e nada muda.
+    pub fn load_battery_ram(&mut self, bytes: &[u8]) -> bool {
+        self.bus.load_cart_ram(bytes)
+    }
+
     /// Botão Pause do console (gera uma NMI).
     pub fn press_pause(&mut self) {
         self.cpu.request_nmi();

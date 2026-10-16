@@ -8,6 +8,8 @@ export interface Game {
   recognized: boolean;
   /** Há progresso salvo: abrir o jogo continua de onde parou. */
   hasSave: boolean;
+  /** Há save do próprio jogo (`.sav`, a RAM do cartucho) para exportar. */
+  hasGameSave: boolean;
 }
 
 /** Espelha `commands::LibraryScan`. */

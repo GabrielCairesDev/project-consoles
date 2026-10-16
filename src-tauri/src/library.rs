@@ -44,6 +44,9 @@ pub struct Game {
     pub recognized: bool,
     /// Há progresso salvo para continuar (preenchido pelo launcher).
     pub has_save: bool,
+    /// Há save do próprio jogo (`.sav`) para exportar (preenchido pelo
+    /// launcher).
+    pub has_game_save: bool,
     #[serde(skip)]
     pub path: PathBuf,
     /// Nome No-Intro, usado para localizar a capa.
@@ -250,6 +253,7 @@ fn game_for(
         file_name,
         recognized: no_intro_name.is_some(),
         has_save: false,
+        has_game_save: false,
         path,
         no_intro_name,
     })

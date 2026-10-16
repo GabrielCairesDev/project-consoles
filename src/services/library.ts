@@ -1,7 +1,7 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
-import type { CoverImage, CoverKind, LibraryScan } from "../domain/game";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import type { CoverImage, CoverKind, Game, LibraryScan } from "../domain/game";
 
 /** Pasta da biblioteca configurada, ou `null` se ainda não escolhida. */
 export function getLibraryDir(): Promise<string | null> {
@@ -48,11 +48,40 @@ export interface GameExited {
   code: number | null;
   /** O jogo deixou progresso salvo para continuar. */
   hasSave: boolean;
+  /** O jogo tem save próprio (`.sav`). */
+  hasGameSave: boolean;
 }
 
 /** Apaga o progresso salvo do jogo, para recomeçar do início. */
 export function deleteSave(gameId: string): Promise<void> {
   return invoke<void>("delete_save", { gameId });
+}
+
+/** `.sav` é o formato da maioria dos emuladores; `.srm` é o do RetroArch. Mesmo conteúdo. */
+const SAVE_FILTERS = [{ name: "Save do jogo", extensions: ["sav", "srm"] }];
+
+/**
+ * Pergunta onde guardar o save do jogo e o copia para lá. Resolve com `false`
+ * se o usuário cancelar.
+ */
+export async function exportGameSave(game: Game): Promise<boolean> {
+  // Caracteres proibidos em nomes de arquivo no Windows (e `/` em todos).
+  const name = game.title.replace(/[\\/:*?"<>|]/g, "_");
+  const destination = await save({ defaultPath: `${name}.sav`, filters: SAVE_FILTERS });
+  if (destination === null) return false;
+  await invoke<void>("export_game_save", { gameId: game.id, destination });
+  return true;
+}
+
+/**
+ * Pergunta qual save instalar no jogo; o núcleo confere com o cartucho e
+ * recusa sem tocar no save atual. Resolve com `false` se o usuário cancelar.
+ */
+export async function importGameSave(game: Game): Promise<boolean> {
+  const source = await open({ multiple: false, directory: false, filters: SAVE_FILTERS });
+  if (typeof source !== "string") return false;
+  await invoke<void>("import_game_save", { gameId: game.id, source });
+  return true;
 }
 
 /** Avisa quando a janela de um jogo fecha. Resolve com a função que cancela a escuta. */

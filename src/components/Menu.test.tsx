@@ -71,4 +71,18 @@ describe("Menu", () => {
     expect(screen.queryByRole("menu")).toBeNull();
     expect(first).not.toHaveBeenCalled();
   });
+
+  it("item desativado é anunciado, continua focável e não executa", () => {
+    const onSelect = vi.fn();
+    render(<Harness items={[{ label: "Exportar", onSelect, disabled: true }]} />);
+    fireEvent.click(screen.getByRole("button", { name: "Opções" }));
+
+    const item = screen.getByRole("menuitem", { name: "Exportar" });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    expect(item).toHaveFocus();
+    fireEvent.click(item);
+
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+  });
 });

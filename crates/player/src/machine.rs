@@ -181,10 +181,20 @@ impl Machine {
         }
     }
 
+    /// O cartucho pode ter save do próprio jogo. No Master System sempre
+    /// pode: o cabeçalho não declara bateria, e a RAM só vira save quando o
+    /// jogo a usa ([`Machine::battery_ram`]).
+    pub fn has_battery(&self) -> bool {
+        match self {
+            Self::MasterSystem { .. } => true,
+            Self::Genesis { .. } | Self::GameBoy { .. } => self.battery_ram().is_some(),
+        }
+    }
+
     /// RAM do cartucho com bateria (o save do próprio jogo), se houver.
     pub fn battery_ram(&self) -> Option<&[u8]> {
         match self {
-            Self::MasterSystem { .. } => None,
+            Self::MasterSystem { console, .. } => console.battery_ram(),
             Self::Genesis { console, .. } => console.battery_ram(),
             Self::GameBoy { console, .. } => console.battery_ram(),
         }
@@ -193,7 +203,7 @@ impl Machine {
     /// Carrega o save do jogo; `false` se o cartucho não aceita esses bytes.
     pub fn load_battery_ram(&mut self, bytes: &[u8]) -> bool {
         match self {
-            Self::MasterSystem { .. } => false,
+            Self::MasterSystem { console, .. } => console.load_battery_ram(bytes),
             Self::Genesis { console, .. } => console.load_battery_ram(bytes),
             Self::GameBoy { console, .. } => console.load_battery_ram(bytes),
         }

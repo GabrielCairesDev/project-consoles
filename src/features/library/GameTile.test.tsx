@@ -16,6 +16,7 @@ const GAME: Game = {
   fileName: "a.gba",
   recognized: true,
   hasSave: false,
+  hasGameSave: false,
 };
 
 const BOXART: CoverImage = { src: "asset://capa.png", kind: "boxart" };

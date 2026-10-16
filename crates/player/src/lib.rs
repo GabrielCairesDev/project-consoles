@@ -65,6 +65,71 @@ impl fmt::Display for PlayerError {
 
 impl std::error::Error for PlayerError {}
 
+/// Por que um save do jogo não serve para um cartucho.
+#[derive(Debug)]
+pub enum BatterySaveError {
+    ReadRom(RomReadError),
+    Rom(MachineError),
+    /// O cartucho não tem RAM com bateria.
+    NoBattery,
+    /// O arquivo não tem o tamanho da RAM do cartucho (`expected`, quando
+    /// o cartucho declara um só).
+    WrongSize {
+        size: usize,
+        expected: Option<usize>,
+    },
+}
+
+impl fmt::Display for BatterySaveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ReadRom(e) => write!(f, "não foi possível ler a ROM: {e}"),
+            Self::Rom(e) => write!(f, "ROM inválida: {e}"),
+            Self::NoBattery => f.write_str("este jogo não salva no cartucho"),
+            Self::WrongSize {
+                size,
+                expected: Some(expected),
+            } => write!(
+                f,
+                "o arquivo tem {size} bytes, mas o save deste jogo tem {expected}"
+            ),
+            Self::WrongSize { size, .. } => {
+                write!(
+                    f,
+                    "o arquivo tem {size} bytes, tamanho que este jogo não usa"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for BatterySaveError {}
+
+/// Confere se `bytes` serve como save do jogo da ROM em `rom_path`, com a
+/// mesma regra que o jogo usa ao carregar o save. Liga o núcleo só para
+/// ler o cartucho; não executa nenhum quadro.
+pub fn check_battery_save(
+    rom_path: &Path,
+    system: controls::System,
+    bytes: &[u8],
+) -> Result<(), BatterySaveError> {
+    let rom = rom::read(rom_path, system).map_err(BatterySaveError::ReadRom)?;
+    let mut machine =
+        Machine::new(system, rom, FALLBACK_SAMPLE_RATE).map_err(BatterySaveError::Rom)?;
+    if !machine.has_battery() {
+        return Err(BatterySaveError::NoBattery);
+    }
+    let expected = machine.battery_ram().map(<[u8]>::len);
+    if machine.load_battery_ram(bytes) {
+        Ok(())
+    } else {
+        Err(BatterySaveError::WrongSize {
+            size: bytes.len(),
+            expected,
+        })
+    }
+}
+
 /// Abre a janela e executa o jogo até o usuário fechá-la. O console é o
 /// de `bindings` ([`Bindings::system`]); a ROM pode estar num `.zip`.
 ///
@@ -96,7 +161,7 @@ pub fn run(
     // Sem RAM com bateria não há o que gravar; com um arquivo que não
     // serve (outro tamanho), ele é preservado em vez de sobrescrito.
     let battery_path = battery_path
-        .filter(|_| machine.battery_ram().is_some())
+        .filter(|_| machine.has_battery())
         .filter(|path| load_battery(&mut machine, path));
     if let Some(path) = &state_path {
         resume(&mut machine, path);
@@ -267,6 +332,15 @@ fn load_battery(machine: &mut Machine, path: &Path) -> bool {
     }
 }
 
+/// Grava o save do jogo, se o cartucho tiver o que guardar (um jogo de
+/// Master System que nunca usou a RAM do cartucho não gera arquivo).
+fn save_battery(machine: &Machine, path: &Path) -> std::io::Result<()> {
+    match machine.battery_ram() {
+        Some(ram) => write_state(path, ram),
+        None => Ok(()),
+    }
+}
+
 /// Grava de forma atômica (arquivo temporário + rename), para não deixar
 /// um arquivo pela metade se o processo morrer durante a escrita.
 fn write_state(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -284,8 +358,7 @@ impl ApplicationHandler for App {
     /// jogo.
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
         if let Some(path) = &self.battery_path
-            && let Some(ram) = self.machine.battery_ram()
-            && let Err(e) = write_state(path, ram)
+            && let Err(e) = save_battery(&self.machine, path)
         {
             self.error.get_or_insert(PlayerError::SaveState(e));
         }
@@ -386,6 +459,192 @@ mod tests {
             "tamanho errado: preserva"
         );
         assert_eq!(std::fs::read(&path).expect("leitura"), [1, 2, 3]);
+    }
+
+    /// Mega Drive com SRAM declarada no cabeçalho ("RA" em 0x1B0).
+    fn genesis_rom() -> Vec<u8> {
+        let mut rom = vec![0; 0x400];
+        rom[0x1B0..0x1B2].copy_from_slice(b"RA");
+        rom
+    }
+
+    /// Master System que liga a RAM do cartucho, grava 0x42 e trava.
+    const SMS_WRITES_CART_RAM: &[u8] = &[
+        0x3E, 0x08, // LD A,08h
+        0x32, 0xFC, 0xFF, // LD (FFFCh),A — liga a RAM do cartucho
+        0x3E, 0x42, // LD A,42h
+        0x32, 0x00, 0x80, // LD (8000h),A
+        0x18, 0xFE, // JR $
+    ];
+
+    /// Console, como montar a máquina e o tamanho do `.sav`.
+    type BatteryCase = (&'static str, fn() -> Machine, usize);
+
+    /// Cada console com RAM de save.
+    fn machines_with_battery() -> Vec<BatteryCase> {
+        vec![
+            ("game-boy", game_boy_machine, 0x2000),
+            (
+                "mega-drive",
+                || Machine::new(System::Genesis, genesis_rom(), 44_100).expect("ROM"),
+                0x1_0000,
+            ),
+            ("master-system", || sms_machine(vec![0x18, 0xFE]), 0x8000),
+        ]
+    }
+
+    #[test]
+    fn battery_save_round_trips_on_every_console() {
+        for (console, machine, size) in machines_with_battery() {
+            let dir = tempfile::tempdir().expect("pasta temporária");
+            let path = dir.path().join("saves").join(console).join("jogo.sav");
+            let saved: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+            write_state(&path, &saved).expect("grava");
+
+            let mut running = machine();
+            assert!(running.has_battery(), "{console}");
+            assert!(load_battery(&mut running, &path), "{console}");
+            assert_eq!(running.battery_ram(), Some(&saved[..]), "{console}");
+            running.run_frame();
+            save_battery(&running, &path).expect("grava ao fechar");
+            assert_eq!(std::fs::read(&path).expect("leitura"), saved, "{console}");
+        }
+    }
+
+    #[test]
+    fn battery_save_of_wrong_size_is_preserved_on_every_console() {
+        for (console, machine, size) in machines_with_battery() {
+            let dir = tempfile::tempdir().expect("pasta temporária");
+            let path = dir.path().join("jogo.sav");
+            let foreign = vec![0x33; size + 1];
+            std::fs::write(&path, &foreign).expect("escrita");
+
+            let mut running = machine();
+            assert!(!load_battery(&mut running, &path), "{console}");
+            // O player não grava num save que recusou (`battery_path` vira
+            // `None`); o arquivo continua o mesmo.
+            assert_eq!(std::fs::read(&path).expect("leitura"), foreign, "{console}");
+        }
+    }
+
+    #[test]
+    fn master_system_game_that_never_uses_cartridge_ram_has_no_save() {
+        let dir = tempfile::tempdir().expect("pasta temporária");
+        let path = dir.path().join("jogo.sav");
+        let mut machine = sms_machine(vec![0x18, 0xFE]);
+        assert!(load_battery(&mut machine, &path));
+        for _ in 0..3 {
+            machine.run_frame();
+        }
+        save_battery(&machine, &path).expect("fechar");
+        assert!(!path.exists(), "nada a guardar: nenhum .sav");
+    }
+
+    #[test]
+    fn master_system_game_that_uses_cartridge_ram_gets_a_save() {
+        let dir = tempfile::tempdir().expect("pasta temporária");
+        let path = dir.path().join("jogo.sav");
+        let mut machine = sms_machine(SMS_WRITES_CART_RAM.to_vec());
+        assert!(load_battery(&mut machine, &path));
+        machine.run_frame();
+        save_battery(&machine, &path).expect("fechar");
+        let saved = std::fs::read(&path).expect("save criado");
+        assert_eq!(saved.len(), 0x8000, "32 KB, como a RAM do cartucho");
+        assert_eq!(saved[0], 0x42);
+
+        // E volta: outro jogo do mesmo cartucho lê o que foi gravado.
+        let mut next = sms_machine(SMS_WRITES_CART_RAM.to_vec());
+        assert!(load_battery(&mut next, &path));
+        assert_eq!(next.battery_ram().map(|r| r[0]), Some(0x42));
+    }
+
+    #[test]
+    fn master_system_accepts_saves_of_8_16_and_32_kb() {
+        let dir = tempfile::tempdir().expect("pasta temporária");
+        let path = dir.path().join("jogo.sav");
+        for size in [0x2000, 0x4000, 0x8000] {
+            std::fs::write(&path, vec![0x5A; size]).expect("escrita");
+            let mut machine = sms_machine(vec![0x18, 0xFE]);
+            assert!(load_battery(&mut machine, &path), "{size}");
+            let ram = machine.battery_ram().expect("carregada");
+            assert_eq!(ram.len(), 0x8000, "{size}");
+            assert!(ram[..size].iter().all(|&b| b == 0x5A), "{size}");
+            assert!(ram[size..].iter().all(|&b| b == 0), "{size}");
+        }
+        for size in [0, 0x1000, 0x6000, 0x1_0000] {
+            std::fs::write(&path, vec![0x5A; size]).expect("escrita");
+            let mut machine = sms_machine(vec![0x18, 0xFE]);
+            assert!(!load_battery(&mut machine, &path), "{size}");
+            assert_eq!(std::fs::read(&path).expect("leitura").len(), size);
+        }
+    }
+
+    #[test]
+    fn check_battery_save_follows_the_cartridge() {
+        let dir = tempfile::tempdir().expect("pasta temporária");
+        let mut rom = vec![0; 0x8000];
+        rom[0x147] = 0x03; // MBC1 + RAM + bateria
+        rom[0x149] = 0x02; // 8 KB
+        let gb = dir.path().join("jogo.gb");
+        std::fs::write(&gb, &rom).expect("escrita");
+
+        assert!(check_battery_save(&gb, System::GameBoy, &[0; 0x2000]).is_ok());
+        assert!(matches!(
+            check_battery_save(&gb, System::GameBoy, &[0; 0x8000]),
+            Err(BatterySaveError::WrongSize {
+                size: 0x8000,
+                expected: Some(0x2000)
+            })
+        ));
+
+        rom[0x147] = 0x01; // MBC1 sem RAM
+        std::fs::write(&gb, &rom).expect("escrita");
+        assert!(matches!(
+            check_battery_save(&gb, System::GameBoy, &[0; 0x2000]),
+            Err(BatterySaveError::NoBattery)
+        ));
+
+        let sms = dir.path().join("jogo.sms");
+        std::fs::write(&sms, vec![0; 0x4000]).expect("escrita");
+        assert!(check_battery_save(&sms, System::MasterSystem, &[0; 0x8000]).is_ok());
+        assert!(check_battery_save(&sms, System::MasterSystem, &[0; 100]).is_err());
+
+        let md = dir.path().join("jogo.md");
+        std::fs::write(&md, genesis_rom()).expect("escrita");
+        assert!(check_battery_save(&md, System::Genesis, &[0; 0x1_0000]).is_ok());
+        assert!(matches!(
+            check_battery_save(&md, System::Genesis, &[0; 0x8000]),
+            Err(BatterySaveError::WrongSize {
+                expected: Some(0x1_0000),
+                ..
+            })
+        ));
+        std::fs::write(&md, vec![0; 0x400]).expect("escrita");
+        assert!(matches!(
+            check_battery_save(&md, System::Genesis, &[0; 0x1_0000]),
+            Err(BatterySaveError::NoBattery)
+        ));
+
+        let missing = dir.path().join("nada.gb");
+        assert!(matches!(
+            check_battery_save(&missing, System::GameBoy, &[]),
+            Err(BatterySaveError::ReadRom(_))
+        ));
+    }
+
+    #[test]
+    fn master_system_saves_only_after_the_game_uses_cartridge_ram() {
+        let dir = tempfile::tempdir().expect("pasta temporária");
+        let path = dir.path().join("jogo.sav");
+        let mut machine = sms_machine(vec![0x18, 0xFE]);
+        assert!(machine.has_battery());
+        assert!(load_battery(&mut machine, &path), "sem arquivo: pode criar");
+        assert!(machine.battery_ram().is_none(), "nada a gravar ainda");
+
+        std::fs::write(&path, vec![0x42; 0x8000]).expect("escrita");
+        let mut machine = sms_machine(vec![0x18, 0xFE]);
+        assert!(load_battery(&mut machine, &path));
+        assert_eq!(machine.battery_ram(), Some(&[0x42; 0x8000][..]));
     }
 
     #[test]

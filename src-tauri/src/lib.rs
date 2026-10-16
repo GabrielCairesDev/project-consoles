@@ -44,6 +44,8 @@ pub fn run() {
             commands::get_controls,
             commands::set_controls,
             commands::delete_save,
+            commands::export_game_save,
+            commands::import_game_save,
             commands::get_console_settings,
             commands::set_console_settings,
         ])

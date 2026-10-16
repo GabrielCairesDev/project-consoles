@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { type Game, countGamesByConsole, formatGameCount } from "./game";
 
 function game(id: string, consoleId: string): Game {
-  return { id, consoleId, title: id, fileName: id, recognized: true, hasSave: false };
+  return { id, consoleId, title: id, fileName: id, recognized: true, hasSave: false, hasGameSave: false };
 }
 
 describe("countGamesByConsole", () => {

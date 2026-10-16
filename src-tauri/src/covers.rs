@@ -342,6 +342,7 @@ mod tests {
             file_name,
             recognized: no_intro_name.is_some(),
             has_save: false,
+            has_game_save: false,
             path,
             no_intro_name: no_intro_name.map(str::to_owned),
         }

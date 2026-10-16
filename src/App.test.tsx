@@ -54,9 +54,9 @@ describe("App", () => {
     vi.mocked(scanLibrary).mockResolvedValue({
       folder: "/Jogos",
       games: [
-        { id: "a", consoleId: "snes", title: "A", fileName: "a", recognized: true, hasSave: false },
-        { id: "b", consoleId: "snes", title: "B", fileName: "b", recognized: true, hasSave: false },
-        { id: "c", consoleId: "game-boy", title: "C", fileName: "c", recognized: true, hasSave: false },
+        { id: "a", consoleId: "snes", title: "A", fileName: "a", recognized: true, hasSave: false, hasGameSave: false },
+        { id: "b", consoleId: "snes", title: "B", fileName: "b", recognized: true, hasSave: false, hasGameSave: false },
+        { id: "c", consoleId: "game-boy", title: "C", fileName: "c", recognized: true, hasSave: false, hasGameSave: false },
       ],
     });
     render(<App />);
@@ -87,7 +87,7 @@ describe("App", () => {
     await act(async () => {
       finish({
         folder: "/Jogos",
-        games: [{ id: "a", consoleId: "snes", title: "A", fileName: "a", recognized: true, hasSave: false }],
+        games: [{ id: "a", consoleId: "snes", title: "A", fileName: "a", recognized: true, hasSave: false, hasGameSave: false }],
       });
     });
 

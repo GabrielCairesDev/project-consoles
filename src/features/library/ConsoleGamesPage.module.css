@@ -106,6 +106,26 @@
   font-size: var(--text-sm);
 }
 
+.inlineNotice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  color: var(--color-success);
+  font-size: var(--text-sm);
+}
+
+/* Fica no DOM vazio, para o leitor de tela anunciar quando a mensagem chega. */
+.inlineNotice:empty {
+  margin: 0;
+}
+
+.noticeIcon {
+  flex: none;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+}
+
 .visuallyHidden {
   position: absolute;
   width: 1px;

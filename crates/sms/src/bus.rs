@@ -18,6 +18,10 @@ pub(crate) struct SmsBus {
     bank_count: usize,
     ram: Box<[u8; RAM_SIZE]>,
     cart_ram: Box<[u8; CART_RAM_SIZE]>,
+    /// O jogo já gravou na RAM do cartucho (ou ela veio de um save). O
+    /// cabeçalho do Master System não diz se o cartucho tem bateria; usar a
+    /// RAM é o sinal de que há save a guardar.
+    cart_ram_used: bool,
     /// Registradores do mapper em 0xFFFC–0xFFFF.
     mapper: [u8; 4],
     io_control: u8,
@@ -37,6 +41,7 @@ impl SmsBus {
             bank_count,
             ram: Box::new([0; RAM_SIZE]),
             cart_ram: Box::new([0; CART_RAM_SIZE]),
+            cart_ram_used: false,
             mapper: [0, 0, 1, 2],
             io_control: 0xFF,
             vdp: Vdp::new(),
@@ -133,6 +138,7 @@ impl Bus for SmsBus {
             0x8000..=0xBFFF if self.cart_ram_enabled() => {
                 let i = self.cart_ram_index(addr);
                 self.cart_ram[i] = value;
+                self.cart_ram_used = true;
             }
             0xC000..=0xFFFF => {
                 self.ram[usize::from(addr) % RAM_SIZE] = value;
@@ -177,6 +183,24 @@ impl Bus for SmsBus {
 }
 
 impl SmsBus {
+    /// RAM do cartucho, depois que o jogo a usou.
+    pub(crate) fn cart_ram(&self) -> Option<&[u8]> {
+        self.cart_ram_used.then_some(self.cart_ram.as_slice())
+    }
+
+    /// Carrega a RAM do cartucho a partir de um save. Aceita 8, 16 ou 32 KB
+    /// (outros emuladores gravam só os bancos usados); o resto fica zerado.
+    pub(crate) fn load_cart_ram(&mut self, bytes: &[u8]) -> bool {
+        if !matches!(bytes.len(), 0x2000 | 0x4000 | CART_RAM_SIZE) {
+            return false;
+        }
+        let (head, tail) = self.cart_ram.split_at_mut(bytes.len());
+        head.copy_from_slice(bytes);
+        tail.fill(0);
+        self.cart_ram_used = true;
+        true
+    }
+
     /// A ROM não entra no estado: quem carrega já tem a mesma ROM (o hash é
     /// conferido em [`crate::Console::load_state`]).
     pub(crate) fn save_state(&self, w: &mut Writer) {
@@ -191,6 +215,8 @@ impl SmsBus {
     pub(crate) fn load_state(&mut self, r: &mut Reader<'_>) -> Result<(), StateError> {
         r.fill(self.ram.as_mut_slice())?;
         r.fill(self.cart_ram.as_mut_slice())?;
+        // O estado não guarda o sinal; RAM com conteúdo já foi usada.
+        self.cart_ram_used |= self.cart_ram.iter().any(|&b| b != 0);
         r.fill(&mut self.mapper)?;
         self.io_control = r.u8()?;
         self.vdp.load_state(r)?;
@@ -252,6 +278,38 @@ mod tests {
         assert_eq!(bus.read(0x8000), 0x00);
         bus.write(0xFFFC, 0x00);
         assert_eq!(bus.read(0x8000), 2);
+    }
+
+    #[test]
+    fn cartridge_ram_is_a_save_only_after_use() {
+        let mut bus = bus_with_banks(4);
+        assert!(
+            bus.cart_ram().is_none(),
+            "jogo que não usa a RAM não tem save"
+        );
+        bus.write(0x8000, 0x99); // RAM desligada: escrita na ROM, ignorada
+        assert!(bus.cart_ram().is_none());
+        bus.write(0xFFFC, 0x08);
+        bus.write(0x8001, 0x42);
+        let ram = bus.cart_ram().expect("RAM usada");
+        assert_eq!(ram.len(), CART_RAM_SIZE);
+        assert_eq!(ram[1], 0x42);
+    }
+
+    #[test]
+    fn cartridge_ram_loads_from_saves_of_known_sizes() {
+        let mut bus = bus_with_banks(4);
+        for wrong in [0, 0x1000, 0x2001, 0x10000] {
+            assert!(!bus.load_cart_ram(&vec![1; wrong]), "{wrong}");
+        }
+        assert!(bus.cart_ram().is_none(), "recusado: nada muda");
+
+        assert!(bus.load_cart_ram(&[0x77; CART_RAM_SIZE]));
+        assert!(bus.load_cart_ram(&[0x55; 0x2000]), "8 KB de outro emulador");
+        let ram = bus.cart_ram().expect("carregada");
+        assert_eq!(ram.len(), CART_RAM_SIZE);
+        assert!(ram[..0x2000].iter().all(|&b| b == 0x55));
+        assert!(ram[0x2000..].iter().all(|&b| b == 0), "o resto é zerado");
     }
 
     #[test]
