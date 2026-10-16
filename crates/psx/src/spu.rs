@@ -6,8 +6,8 @@
 //! linha de vídeo. Uma voz que lê o endereço do IRQA (ou uma transferência
 //! ou captura nele) gera a IRQ 9.
 //!
-//! O som do CD (CD-DA e XA-ADPCM) ainda não entra no mixer; os buffers de
-//! captura do CD recebem silêncio.
+//! O som do CD (CD-DA e XA-ADPCM) chega já a 44,1 kHz numa fila do
+//! controlador do CD-ROM: uma amostra por amostra gerada aqui.
 
 mod envelope;
 mod reverb;
@@ -46,6 +46,7 @@ const DATA: usize = 0x1A8 / 2;
 const ATTR: usize = 0x1AA / 2;
 const RAM_CTRL: usize = 0x1AC / 2;
 const STATX: usize = 0x1AE / 2;
+const CD_VOLUME: usize = 0x1B0 / 2;
 const MVOLX: usize = 0x1B8 / 2;
 const REVERB: usize = 0x1C0 / 2;
 const VOLX: usize = 0x200 / 2;
@@ -54,6 +55,8 @@ const ATTR_ENABLE: u16 = 1 << 15;
 const ATTR_UNMUTE: u16 = 1 << 14;
 const ATTR_REVERB: u16 = 1 << 7;
 const ATTR_IRQ: u16 = 1 << 6;
+const ATTR_CD_REVERB: u16 = 1 << 2;
+const ATTR_CD_AUDIO: u16 = 1;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Transfer {
@@ -308,15 +311,16 @@ impl Spu {
 
     // --- Som ---
 
-    /// Gera as amostras até `now`.
-    pub(crate) fn sync(&mut self, now: u64) {
+    /// Gera as amostras até `now`, consumindo uma amostra do som do CD
+    /// (`cd`) por vez; sem som na fila, o CD fica em silêncio.
+    pub(crate) fn sync(&mut self, now: u64, cd: &mut VecDeque<[i16; 2]>) {
         while self.next_tick <= now {
             self.next_tick += TICKS_PER_SAMPLE;
-            self.tick();
+            self.tick(cd.pop_front().unwrap_or_default());
         }
     }
 
-    fn tick(&mut self) {
+    fn tick(&mut self, cd: [i16; 2]) {
         let attr = self.attr();
         self.noise.tick(attr);
         let (pmon, non, eon) = (self.flags(PMON), self.flags(NON), self.flags(EON));
@@ -344,7 +348,19 @@ impl Spu {
                 }
             }
         }
-        self.capture_voices();
+        self.capture(cd);
+        // O som do CD não depende do bit de ligado nem do mudo do SPU.
+        let mut cd_out = [0; 2];
+        for side in 0..2 {
+            let volume = i32::from(self.registers[CD_VOLUME + side] as i16);
+            let sample = (i32::from(cd[side]) * volume) >> 15;
+            if attr & ATTR_CD_AUDIO != 0 {
+                cd_out[side] = sample;
+                if attr & ATTR_CD_REVERB != 0 {
+                    reverb_in[side] += sample;
+                }
+            }
+        }
 
         let reverb = self.reverb.tick(
             &mut self.ram,
@@ -354,7 +370,7 @@ impl Spu {
         let unmuted = attr & (ATTR_ENABLE | ATTR_UNMUTE) == ATTR_ENABLE | ATTR_UNMUTE;
         for side in 0..2 {
             let echo = (reverb[side] * i32::from(self.registers[EVOL + side] as i16)) >> 15;
-            let sum = if unmuted { mix[side] + echo } else { 0 };
+            let sum = if unmuted { mix[side] + echo } else { 0 } + cd_out[side];
             let volume = i32::from(self.main_volume[side].level);
             let out = (sum.clamp(-0x8000, 0x7FFF) * volume) >> 15;
             self.output.push(out.clamp(-0x8000, 0x7FFF) as i16);
@@ -365,11 +381,11 @@ impl Spu {
         }
     }
 
-    /// Buffers de captura: CD (ainda mudo) e as vozes 1 e 3, depois do
-    /// envelope.
-    fn capture_voices(&mut self) {
+    /// Buffers de captura: o CD antes do volume e as vozes 1 e 3, depois
+    /// do envelope.
+    fn capture(&mut self, cd: [i16; 2]) {
         let position = u32::from(self.capture) * 2;
-        let samples = [0, 0, self.voices[1].output, self.voices[3].output];
+        let samples = [cd[0], cd[1], self.voices[1].output, self.voices[3].output];
         for (buffer, sample) in samples.into_iter().enumerate() {
             let at = buffer as u32 * 0x400 + position;
             self.ram[at as usize / 2] = sample as u16;
@@ -439,7 +455,7 @@ mod tests {
         write(&mut spu, 4, 0x000F);
         write(&mut spu, 5, 0x1FC0);
         write(&mut spu, KON, 1);
-        spu.sync(100 * TICKS_PER_SAMPLE);
+        spu.sync(100 * TICKS_PER_SAMPLE, &mut VecDeque::new());
         let mut out = Vec::new();
         spu.drain(&mut out);
         assert_eq!(out.len(), 200);
@@ -455,7 +471,7 @@ mod tests {
         );
 
         write(&mut spu, KOFF, 1);
-        spu.sync(200 * TICKS_PER_SAMPLE);
+        spu.sync(200 * TICKS_PER_SAMPLE, &mut VecDeque::new());
         assert_eq!(spu.read16(0xC), 0, "release rápido");
         write(&mut spu, KON, 1);
         assert_eq!(spu.read16(ENDX as u32 * 2) & 1, 0, "Key On limpa o ENDX");
@@ -469,10 +485,46 @@ mod tests {
         write(&mut spu, 3, 0x1000 / 8);
         write(&mut spu, KON, 1);
         write(&mut spu, ATTR, ATTR_ENABLE);
-        spu.sync(50 * TICKS_PER_SAMPLE);
+        spu.sync(50 * TICKS_PER_SAMPLE, &mut VecDeque::new());
         let mut out = Vec::new();
         spu.drain(&mut out);
         assert!(out.iter().all(|&s| s == 0.0));
+    }
+
+    #[test]
+    fn cd_audio_is_mixed_with_its_volume_and_captured() {
+        let mut spu = Spu::default();
+        // Mudo, mas com a entrada do CD ligada: o CD não respeita o mudo.
+        write(&mut spu, ATTR, ATTR_ENABLE | ATTR_CD_AUDIO);
+        write(&mut spu, MVOL, 0x3FFF);
+        write(&mut spu, MVOL + 1, 0x3FFF);
+        write(&mut spu, CD_VOLUME, 0x4000);
+        write(&mut spu, CD_VOLUME + 1, 0x7FFF);
+        let mut cd: VecDeque<_> = [[0x2000, -0x2000], [0x1000, 0x1000]].into();
+        spu.sync(3 * TICKS_PER_SAMPLE, &mut cd);
+        assert!(cd.is_empty());
+        let mut out = Vec::new();
+        spu.drain(&mut out);
+        let out: Vec<i32> = out.iter().map(|&s| (s * 32768.0) as i32).collect();
+        // Volume 0x4000 é metade; o principal (0x3FFF) quase 1.
+        assert_eq!(
+            out[..2],
+            [0x0FFF, -0x2000],
+            "o deslocamento arredonda para baixo"
+        );
+        assert_eq!(out[4..], [0, 0], "fila vazia: silêncio");
+        // Captura antes do volume: esquerda em 0x000, direita em 0x400.
+        assert_eq!(spu.ram[..2], [0x2000, 0x1000]);
+        assert_eq!(spu.ram[0x200..0x202], [0xE000, 0x1000]);
+
+        // Sem o bit 0, o CD só vai para a captura.
+        write(&mut spu, ATTR, ATTR_ENABLE | ATTR_UNMUTE);
+        let mut cd: VecDeque<_> = [[0x2000, 0x2000]].into();
+        spu.sync(4 * TICKS_PER_SAMPLE, &mut cd);
+        let mut out = Vec::new();
+        spu.drain(&mut out);
+        assert_eq!(out, [0.0, 0.0]);
+        assert_eq!(spu.ram[3], 0x2000);
     }
 
     #[test]
@@ -482,15 +534,15 @@ mod tests {
         write(&mut spu, ATTR, ON | ATTR_IRQ);
         write(&mut spu, 3, 0x1000 / 8);
         write(&mut spu, KON, 1);
-        spu.sync(TICKS_PER_SAMPLE);
+        spu.sync(TICKS_PER_SAMPLE, &mut VecDeque::new());
         assert!(spu.take_irq());
         assert_ne!(spu.read16(STATX as u32 * 2) & 0x40, 0);
-        spu.sync(10 * TICKS_PER_SAMPLE);
+        spu.sync(10 * TICKS_PER_SAMPLE, &mut VecDeque::new());
         assert!(!spu.take_irq(), "só uma vez até reconhecer");
         write(&mut spu, ATTR, ON);
         assert_eq!(spu.read16(STATX as u32 * 2) & 0x40, 0);
         write(&mut spu, ATTR, ON | ATTR_IRQ);
-        spu.sync(11 * TICKS_PER_SAMPLE);
+        spu.sync(11 * TICKS_PER_SAMPLE, &mut VecDeque::new());
         assert!(spu.take_irq());
     }
 
@@ -523,7 +575,10 @@ mod tests {
     #[test]
     fn pending_audio_is_bounded() {
         let mut spu = Spu::default();
-        spu.sync(10 * MAX_PENDING as u64 * TICKS_PER_SAMPLE);
+        spu.sync(
+            10 * MAX_PENDING as u64 * TICKS_PER_SAMPLE,
+            &mut VecDeque::new(),
+        );
         assert!(spu.output.len() <= 2 * MAX_PENDING);
     }
 }

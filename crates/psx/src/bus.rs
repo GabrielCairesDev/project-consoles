@@ -464,12 +464,14 @@ impl Bus {
         let irqs = self.timers.sync(now, self.gpu.dot_divider());
         Self::raise_timer_irqs(&mut self.irq, irqs);
         self.sync_sio();
-        self.sync_cdrom();
         self.sync_spu();
     }
 
+    /// Sincroniza antes o CD-ROM, que produz o som do disco consumido pelo
+    /// SPU.
     fn sync_spu(&mut self) {
-        self.spu.sync(self.now);
+        self.sync_cdrom();
+        self.spu.sync(self.now, &mut self.cdrom.audio);
         self.raise_spu_irq();
     }
 
@@ -517,6 +519,42 @@ mod tests {
 
     fn bus() -> Bus {
         Bus::new(Box::new([0; BIOS_SIZE]))
+    }
+
+    #[test]
+    fn cd_audio_played_by_the_drive_comes_out_of_the_spu() {
+        let mut bus = bus();
+        let tone = [1000i16.to_le_bytes(), (-1000i16).to_le_bytes()].concat();
+        let track = tone.repeat(10 * crate::disc::SECTOR_SIZE / 4);
+        bus.cdrom
+            .insert_disc(crate::disc::tests::audio_disc(2, &[track]));
+        // SPU: entrada do CD ligada, volumes no máximo.
+        bus.write16(0x1F80_1DAA, 0xC001);
+        bus.write16(0x1F80_1D80, 0x3FFF);
+        bus.write16(0x1F80_1D82, 0x3FFF);
+        bus.write16(0x1F80_1DB0, 0x7FFF);
+        bus.write16(0x1F80_1DB2, 0x7FFF);
+        // Play da trilha 2.
+        bus.write8(0x1F80_1800, 0);
+        bus.write8(0x1F80_1802, 0x02);
+        bus.write8(0x1F80_1801, 0x03);
+        bus.now = crate::CPU_CLOCK as u64 / 10;
+        bus.read16(0x1F80_1DAE);
+        let mut out = Vec::new();
+        bus.spu.drain(&mut out);
+        let expected = 1000.0 / 32768.0;
+        let playing: Vec<_> = out
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .filter(|s| (s[0] - expected).abs() < 4.0 / 32768.0)
+            .collect();
+        assert!(playing.len() > 1000, "{} amostras", playing.len());
+        assert!(
+            playing
+                .iter()
+                .all(|s| (s[1] + expected).abs() < 2.0 / 32768.0)
+        );
     }
 
     #[test]

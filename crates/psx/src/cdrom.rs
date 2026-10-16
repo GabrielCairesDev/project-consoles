@@ -9,16 +9,21 @@
 //! Um setor lido fica no buffer até a CPU pedir os dados (HCHPCTL bit 7);
 //! então eles vão para a fila de dados, lida byte a byte ou pelo DMA 3.
 //!
+//! O som do disco (CD-DA no Play, XA-ADPCM na leitura) sai a 44,1 kHz,
+//! já com os volumes ATV, na fila [`Cdrom::audio`], que o SPU consome.
+//!
 //! Os tempos são os medidos no hardware (programa `cdrom/timing`), em
-//! média. Ainda não são modelados: o som dos discos (CD-DA e XA-ADPCM,
-//! que vão para o SPU), as notas de posição do modo Report, a tampa
-//! aberta e a troca de disco.
+//! média. Ainda não são modelados: a tampa aberta, a troca de disco, o
+//! envio de XA-ADPCM pela CPU (sound map) e os comandos Forward/Backward.
+
+mod audio;
 
 use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::CPU_CLOCK;
 use crate::disc::{Disc, FIRST_SECTOR, SECTOR_SIZE, TrackKind};
+use audio::{Volumes, XaDecoder};
 
 /// Um setor na velocidade normal (75 por segundo).
 const SECTOR_TICKS: u64 = CPU_CLOCK as u64 / 75;
@@ -42,9 +47,16 @@ const STAT_READING: u8 = 0x20;
 const STAT_SEEKING: u8 = 0x40;
 const STAT_PLAYING: u8 = 0x80;
 
+const MODE_AUTOPAUSE: u8 = 0x02;
+const MODE_REPORT: u8 = 0x04;
+const MODE_XA_FILTER: u8 = 0x08;
 const MODE_XA_ADPCM: u8 = 0x40;
 const MODE_WHOLE_SECTOR: u8 = 0x20;
 const MODE_DOUBLE_SPEED: u8 = 0x80;
+
+/// Som guardado sem o SPU consumir (um segundo); o mais antigo é
+/// descartado.
+const MAX_AUDIO: usize = 44_100;
 
 /// Códigos de erro (segundo byte do INT5).
 const ERROR_PARAM_VALUE: u8 = 0x10;
@@ -149,6 +161,15 @@ pub(crate) struct Cdrom {
     data: Box<[u8; WHOLE_SIZE]>,
     data_len: usize,
     data_pos: usize,
+    /// Trilha tocando, para o AutoPause perceber a troca.
+    play_track: Option<u8>,
+    xa: XaDecoder,
+    volumes: Volumes,
+    /// Mute (todo o som) e ADPMUTE (só o XA-ADPCM).
+    muted: bool,
+    xa_muted: bool,
+    /// Som a 44,1 kHz para o SPU, pela ordem.
+    pub(crate) audio: VecDeque<[i16; 2]>,
 }
 
 impl Default for Cdrom {
@@ -178,8 +199,22 @@ impl Default for Cdrom {
             data: Box::new([0; WHOLE_SIZE]),
             data_len: 0,
             data_pos: 0,
+            play_track: None,
+            xa: XaDecoder::default(),
+            volumes: Volumes::default(),
+            muted: false,
+            xa_muted: false,
+            audio: VecDeque::with_capacity(MAX_AUDIO),
         }
     }
+}
+
+/// Põe uma amostra do disco na fila do SPU, com os volumes ATV.
+fn push_audio(audio: &mut VecDeque<[i16; 2]>, volumes: &Volumes, silent: bool, sample: [i16; 2]) {
+    if audio.len() >= MAX_AUDIO {
+        audio.pop_front();
+    }
+    audio.push_back(if silent { [0, 0] } else { volumes.mix(sample) });
 }
 
 fn bcd(value: u32) -> u8 {
@@ -263,8 +298,17 @@ impl Cdrom {
             }
             (3, 0) => self.request(value),
             (3, 1) => self.acknowledge(value, now),
-            // Volumes do som do disco e o envio de som pela CPU: entram
-            // com o SPU.
+            (2, 2) => self.volumes.pending[0] = value,
+            (3, 2) => self.volumes.pending[1] = value,
+            (1, 3) => self.volumes.pending[2] = value,
+            (2, 3) => self.volumes.pending[3] = value,
+            (3, 3) => {
+                self.xa_muted = value & 1 != 0;
+                if value & 0x20 != 0 {
+                    self.volumes.apply();
+                }
+            }
+            // Envio de XA-ADPCM pela CPU (sound map): não modelado.
             _ => {}
         }
     }
@@ -413,6 +457,7 @@ impl Cdrom {
                 ack
             }
             0x06 | 0x1B => {
+                self.xa = XaDecoder::default();
                 self.start(AfterSeek::Read, now);
                 ack
             }
@@ -449,8 +494,10 @@ impl Cdrom {
                 self.finish_later(now + INIT_TICKS, Second::Stat);
                 ack
             }
-            // Mute e Demute: o som do disco ainda não toca.
-            0x0B | 0x0C => ack,
+            0x0B | 0x0C => {
+                self.muted = command == 0x0B;
+                ack
+            }
             0x0D => {
                 self.filter = (params[0], params[1]);
                 ack
@@ -546,7 +593,10 @@ impl Cdrom {
         let next = at + self.sector_ticks();
         match then {
             AfterSeek::Read => self.drive = Drive::Reading { next },
-            AfterSeek::Play => self.drive = Drive::Playing { next },
+            AfterSeek::Play => {
+                self.play_track = self.track_number(self.position);
+                self.drive = Drive::Playing { next };
+            }
             // A cabeça já leu o cabeçalho do setor procurado.
             AfterSeek::Report => {
                 if self.load_sector() {
@@ -591,10 +641,7 @@ impl Cdrom {
         self.drive = Drive::Reading {
             next: at + self.sector_ticks(),
         };
-        // Com o XA-ADPCM ligado, os setores de som vão para o SPU, não
-        // para a CPU.
-        let submode = self.sector[18];
-        if self.mode & MODE_XA_ADPCM != 0 && submode & 0x44 == 0x44 {
+        if self.deliver_xa() {
             return;
         }
         self.sector_ready = true;
@@ -605,32 +652,116 @@ impl Cdrom {
         }
     }
 
-    /// Avança a música (sem som por enquanto).
+    /// Setores de som em tempo real (submodo áudio + tempo real) vão
+    /// para o decodificador XA, se ligado e se passarem no filtro; com o
+    /// filtro ligado, os que não passam são descartados. Devolve se o setor
+    /// não vai para a CPU.
+    fn deliver_xa(&mut self) -> bool {
+        let sector = &self.sector;
+        let realtime_audio = sector[15] == 2 && sector[18] & 0x44 == 0x44;
+        if !realtime_audio {
+            return false;
+        }
+        let filtering = self.mode & MODE_XA_FILTER != 0;
+        if self.mode & MODE_XA_ADPCM != 0 && (!filtering || (sector[16], sector[17]) == self.filter)
+        {
+            let silent = self.muted || self.xa_muted;
+            let (xa, volumes, audio) = (&mut self.xa, &self.volumes, &mut self.audio);
+            xa.decode(sector, &mut |sample| {
+                push_audio(audio, volumes, silent, sample);
+            });
+            return true;
+        }
+        filtering
+    }
+
+    fn track_number(&self, sector: u32) -> Option<u8> {
+        self.disc.as_ref()?.track_at(sector).map(|t| t.number)
+    }
+
+    /// Toca o próximo setor (trilhas de dados saem mudas) e manda, se
+    /// pedido, o relatório de posição.
     fn play_next(&mut self, at: u64) {
         let end = self.disc.as_ref().map_or(0, |d| d.end());
+        let track = self.track_number(self.position);
+        // Fim do disco: o motor para. Fim da trilha com AutoPause: pausa
+        // no fim dela; sem AutoPause, segue para a próxima.
         if self.position >= end {
-            self.drive = Drive::Idle;
+            self.drive = Drive::Stopped;
             self.push(self.stat_response(INT_END));
             return;
         }
+        if track != self.play_track {
+            if self.mode & MODE_AUTOPAUSE != 0 {
+                self.drive = Drive::Idle;
+                self.push(self.stat_response(INT_END));
+                return;
+            }
+            self.play_track = track;
+        }
+        if !self.load_sector() {
+            return;
+        }
+        let audio = self.header.is_none();
+        let mut peak = 0u16;
+        for frame in self.sector.as_chunks::<4>().0 {
+            let sample = if audio {
+                [
+                    i16::from_le_bytes([frame[0], frame[1]]),
+                    i16::from_le_bytes([frame[2], frame[3]]),
+                ]
+            } else {
+                [0, 0]
+            };
+            peak = peak.max(sample[0].unsigned_abs().max(sample[1].unsigned_abs()));
+            push_audio(&mut self.audio, &self.volumes, self.muted, sample);
+        }
+        let played = self.position;
         self.position += 1;
         self.drive = Drive::Playing {
             next: at + self.sector_ticks(),
         };
+        if self.mode & MODE_REPORT != 0 && (played % 75).is_multiple_of(10) {
+            self.report(played, peak.min(0x7FFF));
+        }
     }
 
-    /// GetlocP: trilha, índice e posição na trilha e no disco.
-    fn location(&self) -> Response {
-        let Some(disc) = &self.disc else {
-            return self.error(ERROR_NOT_READY);
+    /// Relatório do Play: posição absoluta nos frames 0, 20, 40 e 60, e
+    /// relativa à trilha (segundos com o bit 7) nos 10, 30, 50 e 70.
+    fn report(&mut self, sector: u32, peak: u16) {
+        let Some((track, index, relative)) = self.subq(sector) else {
+            return;
         };
-        let p = self.position;
-        let (track, index, relative) = match disc.track_at(p) {
+        let [m, s, f] = if (sector % 75).is_multiple_of(20) {
+            msf(sector)
+        } else {
+            let [m, s, f] = msf(relative);
+            [m, s | 0x80, f]
+        };
+        let [low, high] = peak.to_le_bytes();
+        if !self.ready.iter().any(|r| r.int == INT_DATA) {
+            let response = [self.stat(), track, index, m, s, f, low, high];
+            self.push(Response::new(INT_DATA, &response));
+        }
+    }
+
+    /// Trilha, índice (BCD) e tempo dentro da trilha do subcanal Q.
+    fn subq(&self, p: u32) -> Option<(u8, u8, u32)> {
+        let disc = self.disc.as_ref()?;
+        Some(match disc.track_at(p) {
             Some(t) if p >= t.start => (bcd(t.number.into()), 1, p - t.start),
             Some(t) => (bcd(t.number.into()), 0, t.start - p),
             None if p >= disc.end() => (0xAA, 1, p - disc.end()),
             // Lead-in: antes da pausa da trilha 1.
             None => (1, 0, FIRST_SECTOR - p),
+        })
+    }
+
+    /// GetlocP: trilha, índice e posição na trilha e no disco.
+    fn location(&self) -> Response {
+        let p = self.position;
+        let Some((track, index, relative)) = self.subq(p) else {
+            return self.error(ERROR_NOT_READY);
         };
         let [m, s, f] = msf(relative);
         let [am, as_, af] = msf(p);
@@ -742,7 +873,7 @@ impl Cdrom {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::disc::tests::data_disc;
+    use crate::disc::tests::{audio_disc, data_disc, disc_with};
 
     /// Controlador com as interrupções ligadas e, se pedido, um disco.
     fn cdrom(disc: Option<Disc>) -> Cdrom {
@@ -985,6 +1116,128 @@ mod tests {
         assert_eq!(next_irq(&mut cd, &mut now).1[..2], [STAT_MOTOR, 0x20]);
         send(&mut cd, now, 0x19, &[0x20]);
         assert_eq!(next_irq(&mut cd, &mut now).1, [0x94, 0x09, 0x19, 0xC0]);
+    }
+
+    fn xa(file: u8, channel: u8) -> [u8; SECTOR_SIZE] {
+        let mut sector = audio::tests::xa_sector(0x00, 0x00, 0x11);
+        sector[16] = file;
+        sector[17] = channel;
+        sector
+    }
+
+    #[test]
+    fn xa_sectors_go_to_the_spu_and_the_filter_selects_the_channel() {
+        let data: [u8; SECTOR_SIZE] = crate::disc::tests::data_sector(FIRST_SECTOR + 2, 7)
+            .try_into()
+            .expect("setor");
+        let disc = disc_with(&[xa(1, 0), xa(1, 1), data, xa(1, 0)]);
+        let mut cd = cdrom(Some(disc));
+        let mut now = 0;
+        send(&mut cd, now, 0x0E, &[MODE_XA_ADPCM | MODE_XA_FILTER]);
+        next_irq(&mut cd, &mut now);
+        send(&mut cd, now, 0x0D, &[1, 0]);
+        next_irq(&mut cd, &mut now);
+        send(&mut cd, now, 0x1B, &[]);
+        next_irq(&mut cd, &mut now);
+        // Só o setor de dados chega à CPU; o do canal 1 é descartado.
+        assert_eq!(next_irq(&mut cd, &mut now).0, INT_DATA);
+        assert_eq!(cd.audio.len(), 4704, "um setor mono a 37,8 kHz");
+        assert!(cd.audio.iter().any(|s| s[0] > 0x0E00 && s[0] == s[1]));
+        assert_eq!(next_irq(&mut cd, &mut now).0, INT_END);
+        assert_eq!(cd.audio.len(), 2 * 4704);
+
+        // ADPMUTE: os setores continuam indo para o SPU, em silêncio.
+        cd.audio.clear();
+        cd.write(0, 3, now);
+        cd.write(3, 0x01, now);
+        cd.write(0, 0, now);
+        cd.write(2, 0x00, now);
+        cd.write(2, 0x02, now);
+        cd.write(2, 0x00, now);
+        cd.write(1, 0x02, now);
+        next_irq(&mut cd, &mut now);
+        send(&mut cd, now, 0x1B, &[]);
+        next_irq(&mut cd, &mut now);
+        next_irq(&mut cd, &mut now);
+        assert_eq!(cd.audio.len(), 4704);
+        assert!(cd.audio.iter().all(|&s| s == [0, 0]));
+    }
+
+    /// Trilha de áudio com a mesma amostra em todos os setores.
+    fn tone(sectors: usize, left: i16, right: i16) -> Vec<u8> {
+        let frame = [left.to_le_bytes(), right.to_le_bytes()].concat();
+        frame.repeat(sectors * SECTOR_SIZE / 4)
+    }
+
+    #[test]
+    fn play_outputs_cd_audio_with_reports_and_autopause() {
+        let disc = audio_disc(2, &[tone(20, 1000, -1000), tone(5, 1, 1)]);
+        let mut cd = cdrom(Some(disc));
+        let mut now = 0;
+        send(&mut cd, now, 0x0E, &[MODE_REPORT | MODE_AUTOPAUSE]);
+        next_irq(&mut cd, &mut now);
+        send(&mut cd, now, 0x03, &[0x02]);
+        next_irq(&mut cd, &mut now);
+        let playing = STAT_MOTOR | STAT_PLAYING;
+        // A trilha 2 começa em 00:02:02; frame 10: tempo na trilha.
+        assert_eq!(
+            next_irq(&mut cd, &mut now),
+            (
+                INT_DATA,
+                vec![playing, 0x02, 0x01, 0x00, 0x80, 0x08, 0xE8, 0x03]
+            )
+        );
+        assert_eq!(cd.audio.front(), Some(&[1000, -1000]));
+        // Frame 20: tempo absoluto.
+        assert_eq!(
+            next_irq(&mut cd, &mut now),
+            (
+                INT_DATA,
+                vec![playing, 0x02, 0x01, 0x00, 0x02, 0x20, 0xE8, 0x03]
+            )
+        );
+        assert_eq!(next_irq(&mut cd, &mut now), (INT_END, vec![STAT_MOTOR]));
+        assert_eq!(cd.audio.len(), 20 * 588, "parou no fim da trilha");
+        send(&mut cd, now, 0x11, &[]);
+        // Parou no começo da trilha 3 (sem pausa).
+        assert_eq!(next_irq(&mut cd, &mut now).1[..2], [0x03, 0x01]);
+    }
+
+    #[test]
+    fn play_without_autopause_runs_to_the_end_and_volumes_apply() {
+        let disc = audio_disc(2, &[tone(3, 1000, -1000), tone(2, 2000, 0)]);
+        let mut cd = cdrom(Some(disc));
+        let mut now = 0;
+        // Esquerda e direita trocadas.
+        cd.write(0, 2, now);
+        cd.write(2, 0x00, now);
+        cd.write(3, 0x80, now);
+        cd.write(0, 3, now);
+        cd.write(1, 0x00, now);
+        cd.write(2, 0x80, now);
+        cd.write(3, 0x20, now);
+        cd.write(0, 0, now);
+        send(&mut cd, now, 0x03, &[0x02]);
+        next_irq(&mut cd, &mut now);
+        assert_eq!(
+            next_irq(&mut cd, &mut now),
+            (INT_END, vec![0x00]),
+            "motor parado"
+        );
+        let audio: Vec<_> = cd.audio.iter().copied().collect();
+        assert_eq!(audio.len(), 5 * 588);
+        assert_eq!(audio[0], [-1000, 1000]);
+        assert_eq!(audio[3 * 588], [0, 2000], "seguiu para a trilha 3");
+
+        // Mute: o disco toca, mas em silêncio.
+        cd.audio.clear();
+        send(&mut cd, now, 0x0B, &[]);
+        next_irq(&mut cd, &mut now);
+        send(&mut cd, now, 0x03, &[0x03]);
+        next_irq(&mut cd, &mut now);
+        next_irq(&mut cd, &mut now);
+        assert_eq!(cd.audio.len(), 2 * 588);
+        assert!(cd.audio.iter().all(|&s| s == [0, 0]));
     }
 
     #[test]

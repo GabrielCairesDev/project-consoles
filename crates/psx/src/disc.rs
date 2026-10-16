@@ -406,6 +406,37 @@ pub(crate) mod tests {
         Disc::single_track((Storage::Memory(bytes), u64::from(count))).expect("disco")
     }
 
+    /// Disco de uma trilha de dados com os setores dados.
+    pub(crate) fn disc_with(sectors: &[[u8; SECTOR_SIZE]]) -> Disc {
+        let bytes = sectors.concat();
+        Disc::single_track((Storage::Memory(bytes), sectors.len() as u64)).expect("disco")
+    }
+
+    /// Trilha 1 de dados com `data` setores e as trilhas de áudio dadas
+    /// (bytes crus, sem pausa entre elas).
+    pub(crate) fn audio_disc(data: u32, audio: &[Vec<u8>]) -> Disc {
+        let mut cue =
+            String::from("FILE data.bin BINARY\nTRACK 01 MODE2/2352\nINDEX 01 00:00:00\n");
+        for (i, _) in audio.iter().enumerate() {
+            cue += &format!(
+                "FILE {i}.bin BINARY\nTRACK {:02} AUDIO\nINDEX 01 00:00:00\n",
+                i + 2
+            );
+        }
+        let mut files = std::iter::once(
+            (0..data)
+                .flat_map(|i| data_sector(FIRST_SECTOR + i, 0))
+                .collect(),
+        )
+        .chain(audio.iter().cloned());
+        Disc::from_cue(&cue, |_| {
+            let bytes: Vec<u8> = files.next().expect("arquivo");
+            let sectors = (bytes.len() / SECTOR_SIZE) as u64;
+            Ok((Storage::Memory(bytes), sectors))
+        })
+        .expect("cue válido")
+    }
+
     fn memory(sectors: u32, fill: u8) -> (Storage, u64) {
         let bytes = vec![fill; sectors as usize * SECTOR_SIZE];
         (Storage::Memory(bytes), u64::from(sectors))
