@@ -56,6 +56,15 @@
   stroke-width: 2;
 }
 
+/* Símbolos dos botões frontais do PlayStation. */
+.symbol {
+  fill: none;
+  stroke: var(--color-controller-print);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .print {
   fill: var(--color-controller-print);
   font-family: var(--font-body);

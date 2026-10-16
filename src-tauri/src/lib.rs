@@ -1,3 +1,4 @@
+pub mod bios;
 pub mod catalog;
 pub mod commands;
 pub mod covers;
@@ -48,6 +49,8 @@ pub fn run() {
             commands::import_game_save,
             commands::get_console_settings,
             commands::set_console_settings,
+            commands::get_bios,
+            commands::set_bios,
         ])
         .run(tauri::generate_context!())
         .expect("falha ao iniciar a aplicação Tauri");

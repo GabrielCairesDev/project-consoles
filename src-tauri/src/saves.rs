@@ -1,5 +1,6 @@
 //! Onde fica o estado salvo de cada jogo ("continuar de onde parou") e o
-//! save do próprio jogo (RAM com bateria do cartucho, `.sav`).
+//! save do próprio jogo (RAM com bateria do cartucho, `.sav`; no
+//! PlayStation, o memory card, `.mcr`).
 //!
 //! Um arquivo por jogo em `<dados do app>/saves/<console>/`. O nome mistura
 //! uma versão legível do caminho do jogo na biblioteca com um hash desse
@@ -18,8 +19,9 @@ use crate::library::Game;
 /// caminho de nenhum sistema.
 const MAX_STEM_CHARS: usize = 80;
 
-/// Maior save importado. A maior RAM de cartucho dos consoles suportados é
-/// a do Game Boy (128 KB); o limite só evita ler arquivos que não são saves.
+/// Maior save importado. Os maiores saves dos consoles suportados são a RAM
+/// do Game Boy e o memory card do PlayStation (128 KB); o limite só evita
+/// ler arquivos que não são saves.
 const MAX_IMPORT_BYTES: u64 = 512 * 1024;
 
 /// Falha ao exportar ou importar o save do jogo. Em nenhum caso o save
@@ -67,10 +69,15 @@ impl SaveStore {
 
     /// Save do próprio jogo, ao lado do estado. Nunca é apagado pelo
     /// "Recomeçar do início": é do jogador, como num cartucho de verdade.
+    /// No PlayStation é um memory card por jogo, no formato bruto `.mcr`.
     pub fn battery_path_for(&self, game: &Game) -> PathBuf {
+        let extension = match game.console_id.as_str() {
+            "playstation" => "mcr",
+            _ => "sav",
+        };
         self.dir
             .join(sanitize(&game.console_id))
-            .join(file_name(&game.id, "sav"))
+            .join(file_name(&game.id, extension))
     }
 
     pub fn exists(&self, game: &Game) -> bool {
@@ -198,6 +205,22 @@ mod tests {
             .unwrap_or_default();
         assert!(name.starts_with("SMS_Sonic (USA).sms-"), "{name}");
         assert!(name.ends_with(".state"));
+    }
+
+    #[test]
+    fn playstation_game_save_is_a_memory_card_file() {
+        let store = SaveStore::new(PathBuf::from("/dados/saves"));
+        let crash = Game {
+            console_id: "playstation".to_owned(),
+            ..game("PS1/Crash Bandicoot (USA).cue")
+        };
+        let path = store.battery_path_for(&crash);
+        assert!(path.starts_with("/dados/saves/playstation"));
+        assert_eq!(path.extension().and_then(|e| e.to_str()), Some("mcr"));
+        assert_eq!(
+            store.battery_path_for(&game("a.gb")).extension(),
+            Some("sav".as_ref())
+        );
     }
 
     #[test]

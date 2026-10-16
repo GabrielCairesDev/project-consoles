@@ -27,7 +27,7 @@ mod timers;
 use bus::{BIOS_SIZE, Bus, RAM_SIZE};
 use cpu::Cpu;
 pub use disc::{Disc, DiscError};
-pub use sio::{Buttons, MEMORY_CARD_SIZE, MemoryCardError};
+pub use sio::{Buttons, MEMORY_CARD_SIZE, MemoryCardError, check_memory_card};
 
 /// Clock da CPU (Hz): 44100 × 768.
 pub const CPU_CLOCK: u32 = 33_868_800;
@@ -115,6 +115,15 @@ impl Exe {
             bss,
             stack: (stack_base != 0).then(|| stack_base.wrapping_add(word(bytes, 0x34))),
         })
+    }
+}
+
+/// Confere se `bytes` tem o tamanho de um BIOS do PlayStation.
+pub fn check_bios(bytes: &[u8]) -> Result<(), BiosError> {
+    if bytes.len() == BIOS_SIZE {
+        Ok(())
+    } else {
+        Err(BiosError::WrongSize(bytes.len()))
     }
 }
 
@@ -224,10 +233,22 @@ impl Console {
         self.bus.sio.memory_card()
     }
 
+    /// O jogo gravou no memory card desde que ele foi colocado (um jogo
+    /// que nunca salva não precisa gerar arquivo).
+    pub fn memory_card_written(&self) -> bool {
+        self.bus.sio.memory_card_written()
+    }
+
     /// Coloca um memory card salvo na porta 1. Tamanho errado ou cartão não
     /// formatado é recusado e o cartão atual fica como está.
     pub fn load_memory_card(&mut self, bytes: &[u8]) -> Result<(), MemoryCardError> {
         self.bus.sio.load_memory_card(bytes)
+    }
+
+    /// Quadros por segundo do modo de vídeo atual (NTSC ou PAL, escolhido
+    /// pelo jogo).
+    pub fn frame_rate(&self) -> f64 {
+        self.bus.gpu.frame_rate()
     }
 
     /// Imagem do último quadro, `0x00RRGGBB`, e o tamanho (largura,

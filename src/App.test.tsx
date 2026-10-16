@@ -23,6 +23,8 @@ const CONSOLES: Console[] = [
     unitsSold: 102_490_000,
     supported: false,
     playable: false,
+    needsBios: false,
+    resumable: true,
   },
 ];
 

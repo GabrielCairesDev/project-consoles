@@ -74,4 +74,22 @@ describe("save do jogo", () => {
 
     await expect(importGameSave(GAME)).rejects.toBe("Save não importado: tamanho errado.");
   });
+
+  it("no PlayStation o save é o memory card (.mcr)", async () => {
+    const crash: Game = {
+      ...GAME,
+      id: "PS1/Crash Bandicoot (USA).cue",
+      consoleId: "playstation",
+      title: "Crash Bandicoot (USA)",
+    };
+    vi.mocked(save).mockResolvedValue(null);
+    vi.mocked(open).mockResolvedValue(null);
+
+    await exportGameSave(crash);
+    await importGameSave(crash);
+
+    const filters = [{ name: "Memory card", extensions: ["mcr", "mcd", "srm"] }];
+    expect(save).toHaveBeenCalledWith({ defaultPath: "Crash Bandicoot (USA).mcr", filters });
+    expect(open).toHaveBeenCalledWith(expect.objectContaining({ filters }));
+  });
 });

@@ -112,6 +112,12 @@ impl Gpu {
         if self.is_pal() { PAL_LINES } else { NTSC_LINES }
     }
 
+    /// Quadros por segundo no modo atual (~59,29 NTSC, ~49,76 PAL).
+    pub(crate) fn frame_rate(&self) -> f64 {
+        let ticks_per_second = f64::from(crate::CPU_CLOCK) * CLOCK_NUM as f64 / CLOCK_DEN as f64;
+        ticks_per_second / (f64::from(self.ticks_per_line()) * f64::from(self.lines()))
+    }
+
     /// Divisor do dot clock no modo atual (256, 320, 368, 512 ou 640 pixels).
     pub(crate) fn dot_divider(&self) -> u64 {
         if self.display_mode & (1 << 6) != 0 {
@@ -360,6 +366,23 @@ mod tests {
         let target = gpu.last_sync + cycles;
         gpu.sync(target, |_, e, _| events.push(e));
         events
+    }
+
+    #[test]
+    fn frame_rate_follows_the_video_standard() {
+        let mut gpu = Gpu::default();
+        // 33 868 800 / 571 212 ciclos por quadro.
+        assert!(
+            (gpu.frame_rate() - 59.293).abs() < 0.001,
+            "{}",
+            gpu.frame_rate()
+        );
+        gpu.gp1(0x0800_0008);
+        assert!(
+            (gpu.frame_rate() - 49.765).abs() < 0.001,
+            "{}",
+            gpu.frame_rate()
+        );
     }
 
     #[test]

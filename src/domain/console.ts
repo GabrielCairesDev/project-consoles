@@ -13,6 +13,10 @@ export interface Console {
   supported: boolean;
   /** O app executa jogos deste console em uma janela nativa. */
   playable: boolean;
+  /** Os jogos só rodam com o BIOS do usuário, escolhido nas configurações. */
+  needsBios: boolean;
+  /** O núcleo sabe "continuar de onde parou". */
+  resumable: boolean;
 }
 
 export interface DecadeGroup {

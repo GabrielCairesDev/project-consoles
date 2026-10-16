@@ -20,6 +20,8 @@ const CONSOLES: Console[] = [
     unitsSold: 13_000_000,
     supported: true,
     playable: false,
+    needsBios: false,
+    resumable: true,
   },
   {
     id: "game-boy",
@@ -30,6 +32,8 @@ const CONSOLES: Console[] = [
     unitsSold: 118_690_000,
     supported: true,
     playable: false,
+    needsBios: false,
+    resumable: true,
   },
   {
     id: "playstation-2",
@@ -40,6 +44,8 @@ const CONSOLES: Console[] = [
     unitsSold: 160_000_000,
     supported: false,
     playable: false,
+    needsBios: false,
+    resumable: true,
   },
 ];
 

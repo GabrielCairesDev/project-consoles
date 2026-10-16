@@ -43,6 +43,8 @@ enum Command {
 pub(super) struct MemoryCard {
     data: Box<[u8; MEMORY_CARD_SIZE]>,
     flag: u8,
+    /// Algum setor foi gravado desde que o cartão foi conectado.
+    written: bool,
     /// Byte da sequência depois do endereço.
     step: usize,
     command: Command,
@@ -58,6 +60,7 @@ impl Default for MemoryCard {
         Self {
             data: formatted(),
             flag: FLAG_FRESH,
+            written: false,
             step: 0,
             command: Command::Unknown,
             sector: 0,
@@ -97,21 +100,33 @@ fn formatted() -> Box<[u8; MEMORY_CARD_SIZE]> {
     data
 }
 
+/// Confere se `bytes` é um memory card: 128 KB começando com o cabeçalho
+/// "MC" de um cartão formatado.
+pub fn check_memory_card(bytes: &[u8]) -> Result<&[u8; MEMORY_CARD_SIZE], MemoryCardError> {
+    let data: &[u8; MEMORY_CARD_SIZE] = bytes
+        .try_into()
+        .map_err(|_| MemoryCardError::WrongSize(bytes.len()))?;
+    if &data[..2] != b"MC" {
+        return Err(MemoryCardError::NotFormatted);
+    }
+    Ok(data)
+}
+
 impl MemoryCard {
     pub(super) fn data(&self) -> &[u8] {
         &self.data[..]
     }
 
+    pub(super) fn written(&self) -> bool {
+        self.written
+    }
+
     /// Troca o conteúdo, como trocar o cartão: o BIOS vê o FLAG de novo.
     pub(super) fn load(&mut self, bytes: &[u8]) -> Result<(), MemoryCardError> {
-        let data: &[u8; MEMORY_CARD_SIZE] = bytes
-            .try_into()
-            .map_err(|_| MemoryCardError::WrongSize(bytes.len()))?;
-        if &data[..2] != b"MC" {
-            return Err(MemoryCardError::NotFormatted);
-        }
+        let data = check_memory_card(bytes)?;
         self.data.copy_from_slice(data);
         self.flag = FLAG_FRESH;
+        self.written = false;
         Ok(())
     }
 
@@ -216,6 +231,7 @@ impl MemoryCard {
                     let buffer = self.buffer;
                     self.sector_bytes().copy_from_slice(&buffer);
                     self.flag &= !FLAG_FRESH;
+                    self.written = true;
                     b'G'
                 };
                 (status, false)
@@ -260,8 +276,10 @@ mod tests {
     #[test]
     fn write_then_read_round_trip() {
         let mut card = MemoryCard::default();
+        assert!(!card.written());
         let data: [u8; 128] = std::array::from_fn(|i| (i as u8).wrapping_mul(3));
         let replies = run(&mut card, &write_frame(0x0123, &data, 0));
+        assert!(card.written(), "gravou um setor");
         assert_eq!(replies[0], (FLAG_FRESH, true));
         assert_eq!(replies[5].0, 0x23, "eco do byte anterior");
         assert_eq!(replies.last(), Some(&(b'G', false)));
@@ -291,6 +309,7 @@ mod tests {
         assert_eq!(replies.last(), Some(&(0xFF, false)));
         assert_eq!(card.data(), &before[..], "nada gravado");
         assert_eq!(card.flag, FLAG_FRESH);
+        assert!(!card.written());
 
         let mut read = vec![b'R', 0, 0, 0x04, 0x00];
         read.resize(9, 0);
@@ -334,7 +353,10 @@ mod tests {
         blank[..2].fill(0);
         assert_eq!(card.load(&blank), Err(MemoryCardError::NotFormatted));
         assert_eq!(card.data()[0x2000], 0, "recusado sem mudar nada");
+        assert!(check_memory_card(&blank).is_err());
+        assert!(check_memory_card(&image).is_ok());
         assert_eq!(card.load(&image), Ok(()));
         assert_eq!(card.data(), &image[..]);
+        assert!(!card.written(), "trocar o cartão não é gravar");
     }
 }

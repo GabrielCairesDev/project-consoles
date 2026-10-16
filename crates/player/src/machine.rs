@@ -4,9 +4,14 @@
 //! compilação, e o laço do player não precisa de despacho dinâmico.
 
 use crate::controls::{Action, System};
+use crate::resample::Resampler;
 
-/// Maior quadro entre os consoles (o Genesis em H40): define a janela.
+/// Maior quadro entre os consoles de cartucho (o Genesis em H40): define a
+/// janela deles.
 pub const MAX_FRAME: (usize, usize) = (genesis::SCREEN_MAX_WIDTH, genesis::SCREEN_HEIGHT);
+/// Quadro de referência do PlayStation (320×240); os modos de alta
+/// resolução usam uma escala menor na mesma janela.
+const PLAYSTATION_FRAME: (usize, usize) = (320, 240);
 
 /// Imagem de um quadro: `size.0` pixels válidos em cada linha de `stride`.
 pub struct Frame<'a> {
@@ -28,6 +33,13 @@ pub enum Machine {
         console: Box<gameboy::Console>,
         buttons: gameboy::Buttons,
     },
+    PlayStation {
+        console: Box<psx::Console>,
+        buttons: psx::Buttons,
+        /// O SPU gera a 44,1 kHz; o dispositivo pode usar outra taxa.
+        resampler: Resampler,
+        native: Vec<f32>,
+    },
 }
 
 #[derive(Debug)]
@@ -35,6 +47,9 @@ pub enum MachineError {
     MasterSystem(sms::RomError),
     Genesis(genesis::RomError),
     GameBoy(gameboy::RomError),
+    Bios(psx::BiosError),
+    /// Console de disco montado como cartucho (erro de quem chamou).
+    NotACartridge,
 }
 
 impl std::fmt::Display for MachineError {
@@ -43,6 +58,8 @@ impl std::fmt::Display for MachineError {
             Self::MasterSystem(e) => e.fmt(f),
             Self::Genesis(e) => e.fmt(f),
             Self::GameBoy(e) => e.fmt(f),
+            Self::Bios(e) => e.fmt(f),
+            Self::NotACartridge => f.write_str("este console usa disco, não cartucho"),
         }
     }
 }
@@ -68,6 +85,23 @@ impl Machine {
                 ),
                 buttons: gameboy::Buttons::default(),
             },
+            System::PlayStation => return Err(MachineError::NotACartridge),
+        })
+    }
+
+    /// Liga o PlayStation com o BIOS do usuário e o disco no drive.
+    pub fn playstation(
+        bios: &[u8],
+        disc: psx::Disc,
+        sample_rate: u32,
+    ) -> Result<Self, MachineError> {
+        let mut console = Box::new(psx::Console::new(bios).map_err(MachineError::Bios)?);
+        console.insert_disc(disc);
+        Ok(Self::PlayStation {
+            console,
+            buttons: psx::Buttons::default(),
+            resampler: Resampler::new(psx::SAMPLE_RATE, sample_rate),
+            native: Vec::new(),
         })
     }
 
@@ -76,6 +110,16 @@ impl Machine {
             Self::MasterSystem { .. } => sms::FRAME_RATE,
             Self::Genesis { .. } => genesis::FRAME_RATE,
             Self::GameBoy { .. } => gameboy::FRAME_RATE,
+            // O jogo escolhe NTSC ou PAL; muda depois do BIOS.
+            Self::PlayStation { console, .. } => console.frame_rate(),
+        }
+    }
+
+    /// Quadro de referência para o tamanho da janela.
+    pub fn base_frame(&self) -> (usize, usize) {
+        match self {
+            Self::PlayStation { .. } => PLAYSTATION_FRAME,
+            _ => MAX_FRAME,
         }
     }
 
@@ -91,6 +135,12 @@ impl Machine {
                 console.run_frame();
             }
             Self::GameBoy { console, buttons } => {
+                console.set_input(*buttons);
+                console.run_frame();
+            }
+            Self::PlayStation {
+                console, buttons, ..
+            } => {
                 console.set_input(*buttons);
                 console.run_frame();
             }
@@ -114,6 +164,14 @@ impl Machine {
                 stride: gameboy::SCREEN_WIDTH,
                 size: (gameboy::SCREEN_WIDTH, gameboy::SCREEN_HEIGHT),
             },
+            Self::PlayStation { console, .. } => {
+                let (pixels, size) = console.framebuffer();
+                Frame {
+                    pixels,
+                    stride: size.0,
+                    size,
+                }
+            }
         }
     }
 
@@ -127,6 +185,16 @@ impl Machine {
             }
             Self::Genesis { console, .. } => console.drain_audio(out),
             Self::GameBoy { console, .. } => console.drain_audio(out),
+            Self::PlayStation {
+                console,
+                resampler,
+                native,
+                ..
+            } => {
+                native.clear();
+                console.drain_audio(native);
+                resampler.process(native, out);
+            }
         }
     }
 
@@ -153,6 +221,11 @@ impl Machine {
                     *button = pressed;
                 }
             }
+            Self::PlayStation { buttons, .. } => {
+                if let Some(button) = playstation_button(buttons, action) {
+                    *button = pressed;
+                }
+            }
         }
     }
 
@@ -162,14 +235,23 @@ impl Machine {
             Self::MasterSystem { joypad, .. } => *joypad = sms::Joypad::default(),
             Self::Genesis { pad, .. } => *pad = genesis::Pad::default(),
             Self::GameBoy { buttons, .. } => *buttons = gameboy::Buttons::default(),
+            Self::PlayStation { buttons, .. } => *buttons = psx::Buttons::default(),
         }
     }
 
-    pub fn save_state(&self) -> Vec<u8> {
+    /// O núcleo sabe salvar o estado ("continuar de onde parou"). O do
+    /// PlayStation ainda não sabe.
+    pub fn supports_state(&self) -> bool {
+        !matches!(self, Self::PlayStation { .. })
+    }
+
+    /// Estado salvo, se o núcleo souber salvar ([`Machine::supports_state`]).
+    pub fn save_state(&self) -> Option<Vec<u8>> {
         match self {
-            Self::MasterSystem { console, .. } => console.save_state(),
-            Self::Genesis { console, .. } => console.save_state(),
-            Self::GameBoy { console, .. } => console.save_state(),
+            Self::MasterSystem { console, .. } => Some(console.save_state()),
+            Self::Genesis { console, .. } => Some(console.save_state()),
+            Self::GameBoy { console, .. } => Some(console.save_state()),
+            Self::PlayStation { .. } => None,
         }
     }
 
@@ -178,34 +260,43 @@ impl Machine {
             Self::MasterSystem { console, .. } => console.load_state(bytes),
             Self::Genesis { console, .. } => console.load_state(bytes),
             Self::GameBoy { console, .. } => console.load_state(bytes),
+            Self::PlayStation { .. } => Err(sms::StateError::NotAState),
         }
     }
 
-    /// O cartucho pode ter save do próprio jogo. No Master System sempre
-    /// pode: o cabeçalho não declara bateria, e a RAM só vira save quando o
-    /// jogo a usa ([`Machine::battery_ram`]).
+    /// O jogo pode ter save próprio. No Master System sempre pode: o
+    /// cabeçalho não declara bateria, e a RAM só vira save quando o jogo a
+    /// usa ([`Machine::battery_ram`]). No PlayStation o save fica no memory
+    /// card, que vale igual.
     pub fn has_battery(&self) -> bool {
         match self {
-            Self::MasterSystem { .. } => true,
+            Self::MasterSystem { .. } | Self::PlayStation { .. } => true,
             Self::Genesis { .. } | Self::GameBoy { .. } => self.battery_ram().is_some(),
         }
     }
 
-    /// RAM do cartucho com bateria (o save do próprio jogo), se houver.
+    /// O save do próprio jogo, se houver o que gravar: a RAM do cartucho com
+    /// bateria ou, no PlayStation, o memory card inteiro (só depois que o
+    /// jogo grava nele).
     pub fn battery_ram(&self) -> Option<&[u8]> {
         match self {
             Self::MasterSystem { console, .. } => console.battery_ram(),
             Self::Genesis { console, .. } => console.battery_ram(),
             Self::GameBoy { console, .. } => console.battery_ram(),
+            Self::PlayStation { console, .. } => {
+                console.memory_card_written().then(|| console.memory_card())
+            }
         }
     }
 
-    /// Carrega o save do jogo; `false` se o cartucho não aceita esses bytes.
+    /// Carrega o save do jogo; `false` se o cartucho (ou o memory card) não
+    /// aceita esses bytes.
     pub fn load_battery_ram(&mut self, bytes: &[u8]) -> bool {
         match self {
             Self::MasterSystem { console, .. } => console.load_battery_ram(bytes),
             Self::Genesis { console, .. } => console.load_battery_ram(bytes),
             Self::GameBoy { console, .. } => console.load_battery_ram(bytes),
+            Self::PlayStation { console, .. } => console.load_memory_card(bytes).is_ok(),
         }
     }
 }
@@ -254,6 +345,26 @@ fn game_boy_button(buttons: &mut gameboy::Buttons, action: Action) -> Option<&mu
     })
 }
 
+fn playstation_button(buttons: &mut psx::Buttons, action: Action) -> Option<&mut bool> {
+    Some(match action {
+        Action::Up => &mut buttons.up,
+        Action::Down => &mut buttons.down,
+        Action::Left => &mut buttons.left,
+        Action::Right => &mut buttons.right,
+        Action::Cross => &mut buttons.cross,
+        Action::Circle => &mut buttons.circle,
+        Action::Square => &mut buttons.square,
+        Action::Triangle => &mut buttons.triangle,
+        Action::L1 => &mut buttons.l1,
+        Action::R1 => &mut buttons.r1,
+        Action::L2 => &mut buttons.l2,
+        Action::R2 => &mut buttons.r2,
+        Action::Start => &mut buttons.start,
+        Action::Select => &mut buttons.select,
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,6 +403,32 @@ mod tests {
         }
         assert!(buttons.up && buttons.a && buttons.b && buttons.start && buttons.select);
         assert!(game_boy_button(&mut buttons, Action::C).is_none());
+    }
+
+    #[test]
+    fn playstation_actions_cover_every_button() {
+        let mut buttons = psx::Buttons::default();
+        for &action in System::PlayStation.actions() {
+            *playstation_button(&mut buttons, action).expect("botão do PlayStation") = true;
+        }
+        let all = psx::Buttons {
+            up: true,
+            down: true,
+            left: true,
+            right: true,
+            cross: true,
+            circle: true,
+            square: true,
+            triangle: true,
+            l1: true,
+            r1: true,
+            l2: true,
+            r2: true,
+            start: true,
+            select: true,
+        };
+        assert_eq!(buttons, all);
+        assert!(playstation_button(&mut buttons, Action::A).is_none());
     }
 
     #[test]

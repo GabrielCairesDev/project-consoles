@@ -1,4 +1,5 @@
-//! Janela nativa que executa um jogo (Master System ou Mega Drive).
+//! Janela nativa que executa um jogo (Master System, Mega Drive, Game Boy
+//! ou PlayStation).
 //!
 //! Roda num processo próprio, iniciado pelo launcher: o event loop do winit
 //! precisa da thread principal (no macOS só pode existir um por processo) e
@@ -10,6 +11,7 @@
 mod audio;
 pub mod controls;
 mod machine;
+mod resample;
 mod ring;
 mod rom;
 mod video;
@@ -29,7 +31,7 @@ use winit::window::{Window, WindowId};
 
 use audio::AudioOut;
 use controls::Bindings;
-use machine::{MAX_FRAME, Machine, MachineError};
+use machine::{Machine, MachineError};
 use rom::RomReadError;
 
 /// Taxa usada quando não há áudio: os chips precisam de alguma taxa de saída.
@@ -44,6 +46,10 @@ const MAX_CATCH_UP_FRAMES: u32 = 3;
 pub enum PlayerError {
     ReadRom(RomReadError),
     Rom(MachineError),
+    /// O PlayStation precisa do BIOS do usuário.
+    MissingBios,
+    ReadBios(std::io::Error),
+    Disc(psx::DiscError),
     EventLoop(winit::error::EventLoopError),
     Window(winit::error::OsError),
     Surface(softbuffer::SoftBufferError),
@@ -55,6 +61,9 @@ impl fmt::Display for PlayerError {
         match self {
             Self::ReadRom(e) => write!(f, "não foi possível ler a ROM: {e}"),
             Self::Rom(e) => write!(f, "ROM inválida: {e}"),
+            Self::MissingBios => f.write_str("falta o BIOS do PlayStation"),
+            Self::ReadBios(e) => write!(f, "não foi possível ler o BIOS: {e}"),
+            Self::Disc(e) => write!(f, "não foi possível abrir o disco: {e}"),
             Self::EventLoop(e) => write!(f, "falha no loop de eventos: {e}"),
             Self::Window(e) => write!(f, "não foi possível abrir a janela: {e}"),
             Self::Surface(e) => write!(f, "falha ao desenhar na janela: {e}"),
@@ -72,6 +81,8 @@ pub enum BatterySaveError {
     Rom(MachineError),
     /// O cartucho não tem RAM com bateria.
     NoBattery,
+    /// O arquivo não é um memory card do PlayStation.
+    MemoryCard(psx::MemoryCardError),
     /// O arquivo não tem o tamanho da RAM do cartucho (`expected`, quando
     /// o cartucho declara um só).
     WrongSize {
@@ -86,6 +97,7 @@ impl fmt::Display for BatterySaveError {
             Self::ReadRom(e) => write!(f, "não foi possível ler a ROM: {e}"),
             Self::Rom(e) => write!(f, "ROM inválida: {e}"),
             Self::NoBattery => f.write_str("este jogo não salva no cartucho"),
+            Self::MemoryCard(e) => e.fmt(f),
             Self::WrongSize {
                 size,
                 expected: Some(expected),
@@ -107,12 +119,18 @@ impl std::error::Error for BatterySaveError {}
 
 /// Confere se `bytes` serve como save do jogo da ROM em `rom_path`, com a
 /// mesma regra que o jogo usa ao carregar o save. Liga o núcleo só para
-/// ler o cartucho; não executa nenhum quadro.
+/// ler o cartucho; não executa nenhum quadro. No PlayStation o save é o
+/// memory card, igual para qualquer disco.
 pub fn check_battery_save(
     rom_path: &Path,
     system: controls::System,
     bytes: &[u8],
 ) -> Result<(), BatterySaveError> {
+    if system == controls::System::PlayStation {
+        return psx::check_memory_card(bytes)
+            .map(|_| ())
+            .map_err(BatterySaveError::MemoryCard);
+    }
     let rom = rom::read(rom_path, system).map_err(BatterySaveError::ReadRom)?;
     let mut machine =
         Machine::new(system, rom, FALLBACK_SAMPLE_RATE).map_err(BatterySaveError::Rom)?;
@@ -130,6 +148,18 @@ pub fn check_battery_save(
     }
 }
 
+/// BIOS recusado pelo console.
+pub use psx::BiosError;
+
+/// Confere se `bytes` é um BIOS que o console aceita (hoje só o
+/// PlayStation usa BIOS).
+pub fn check_bios(system: controls::System, bytes: &[u8]) -> Result<(), BiosError> {
+    match system {
+        controls::System::PlayStation => psx::check_bios(bytes),
+        _ => Ok(()),
+    }
+}
+
 /// Abre a janela e executa o jogo até o usuário fechá-la. O console é o
 /// de `bindings` ([`Bindings::system`]); a ROM pode estar num `.zip`.
 ///
@@ -137,16 +167,21 @@ pub fn check_battery_save(
 /// existir e for desta ROM) e o estado é gravado nele ao fechar.
 ///
 /// Com `battery_path`, a RAM com bateria do cartucho (o save do próprio
-/// jogo) é carregada desse arquivo e gravada nele ao fechar, mesmo sem
-/// `state_path`. O estado salvo, quando existe, vem depois e prevalece.
+/// jogo; no PlayStation, o memory card) é carregada desse arquivo e
+/// gravada nele ao fechar, mesmo sem `state_path`. O estado salvo, quando
+/// existe, vem depois e prevalece.
+///
+/// O PlayStation lê o disco (`.cue` ou `.bin`) em `rom_path` e precisa do
+/// BIOS em `bios_path`; ele ainda não salva estado, então `state_path` é
+/// ignorado.
 pub fn run(
     rom_path: &Path,
     bindings: Bindings,
     state_path: Option<PathBuf>,
     battery_path: Option<PathBuf>,
+    bios_path: Option<PathBuf>,
 ) -> Result<(), PlayerError> {
     let system = bindings.system();
-    let rom = rom::read(rom_path, system).map_err(PlayerError::ReadRom)?;
     let audio = match AudioOut::open() {
         Ok(audio) => Some(audio),
         Err(reason) => {
@@ -157,7 +192,8 @@ pub fn run(
     let sample_rate = audio
         .as_ref()
         .map_or(FALLBACK_SAMPLE_RATE, |a| a.sample_rate);
-    let mut machine = Machine::new(system, rom, sample_rate).map_err(PlayerError::Rom)?;
+    let mut machine = load_machine(rom_path, system, bios_path.as_deref(), sample_rate)?;
+    let state_path = state_path.filter(|_| machine.supports_state());
     // Sem RAM com bateria não há o que gravar; com um arquivo que não
     // serve (outro tamanho), ele é preservado em vez de sobrescrito.
     let battery_path = battery_path
@@ -195,6 +231,23 @@ pub fn run(
     app.error.map_or(Ok(()), Err)
 }
 
+/// Monta o núcleo: a ROM do cartucho, ou o BIOS e o disco do PlayStation.
+fn load_machine(
+    path: &Path,
+    system: controls::System,
+    bios_path: Option<&Path>,
+    sample_rate: u32,
+) -> Result<Machine, PlayerError> {
+    if system == controls::System::PlayStation {
+        let bios_path = bios_path.ok_or(PlayerError::MissingBios)?;
+        let bios = std::fs::read(bios_path).map_err(PlayerError::ReadBios)?;
+        let disc = psx::Disc::open(path).map_err(PlayerError::Disc)?;
+        return Machine::playstation(&bios, disc, sample_rate).map_err(PlayerError::Rom);
+    }
+    let rom = rom::read(path, system).map_err(PlayerError::ReadRom)?;
+    Machine::new(system, rom, sample_rate).map_err(PlayerError::Rom)
+}
+
 struct GameWindow {
     window: Rc<Window>,
     surface: softbuffer::Surface<OwnedDisplayHandle, Rc<Window>>,
@@ -223,8 +276,10 @@ impl App {
     }
 
     fn create_window(&self, event_loop: &ActiveEventLoop) -> Result<GameWindow, PlayerError> {
-        // Mesmo tamanho para todos os consoles: o quadro é centralizado.
-        let (width, height) = (MAX_FRAME.0 as u32, MAX_FRAME.1 as u32);
+        // Mesmo tamanho para todos os consoles de cartucho: o quadro é
+        // centralizado. O PlayStation parte de 320×240.
+        let (width, height) = self.machine.base_frame();
+        let (width, height) = (width as u32, height as u32);
         let size = LogicalSize::new(width * INITIAL_SCALE, height * INITIAL_SCALE);
         let attributes = Window::default_attributes()
             .with_title(&self.title)
@@ -242,6 +297,8 @@ impl App {
 
     fn run_frame(&mut self) {
         self.machine.run_frame();
+        // O PlayStation troca entre NTSC e PAL conforme o jogo.
+        self.frame_duration = Duration::from_secs_f64(1.0 / self.machine.frame_rate());
         self.audio_scratch.clear();
         self.machine
             .drain_audio(&mut self.audio_scratch, &mut self.mono_scratch);
@@ -363,7 +420,8 @@ impl ApplicationHandler for App {
             self.error.get_or_insert(PlayerError::SaveState(e));
         }
         if let Some(path) = &self.state_path
-            && let Err(e) = write_state(path, &self.machine.save_state())
+            && let Some(state) = self.machine.save_state()
+            && let Err(e) = write_state(path, &state)
         {
             self.error.get_or_insert(PlayerError::SaveState(e));
         }
@@ -654,7 +712,7 @@ mod tests {
         let rom = vec![0x18, 0xFE]; // JR $
         let mut console = sms_machine(rom.clone());
         console.run_frame();
-        write_state(&path, &console.save_state()).expect("grava");
+        write_state(&path, &console.save_state().expect("estado")).expect("grava");
         assert!(!path.with_extension("state.tmp").exists());
 
         let mut resumed = sms_machine(rom);
@@ -675,5 +733,98 @@ mod tests {
         std::fs::write(&corrupted, b"lixo").expect("escrita");
         resume(&mut console, &corrupted);
         assert_eq!(console.save_state(), fresh.save_state());
+    }
+
+    /// PlayStation com um BIOS que só fica num laço (`j 0xBFC00000`) e um
+    /// disco de um setor; o memory card começa formatado e vazio.
+    fn playstation_machine(dir: &Path) -> Machine {
+        let mut bios = vec![0; 512 * 1024];
+        bios[..4].copy_from_slice(&0x0BF0_0000u32.to_le_bytes());
+        let disc = dir.join("jogo.bin");
+        std::fs::write(&disc, vec![0; 2352]).expect("escrita");
+        let disc = psx::Disc::open(&disc).expect("disco");
+        Machine::playstation(&bios, disc, 48_000).expect("BIOS do tamanho certo")
+    }
+
+    fn memory_card(machine: &Machine) -> Vec<u8> {
+        match machine {
+            Machine::PlayStation { console, .. } => console.memory_card().to_vec(),
+            _ => unreachable!("só PlayStation"),
+        }
+    }
+
+    #[test]
+    fn playstation_memory_card_is_the_game_save() {
+        let dir = tempfile::tempdir().expect("pasta temporária");
+        let path = dir.path().join("saves/playstation/jogo.mcr");
+        let mut machine = playstation_machine(dir.path());
+        assert!(machine.has_battery());
+        assert!(!machine.supports_state(), "ainda sem estado salvo");
+        assert!(load_battery(&mut machine, &path), "sem arquivo: pode criar");
+        machine.run_frame();
+        save_battery(&machine, &path).expect("fechar");
+        assert!(
+            !path.exists(),
+            "o jogo não gravou no cartão: nada a guardar"
+        );
+
+        // Um cartão salvo volta inteiro.
+        let mut card = memory_card(&machine);
+        card[0x2000..0x2010].fill(0x5A);
+        write_state(&path, &card).expect("grava");
+        let mut machine = playstation_machine(dir.path());
+        assert!(load_battery(&mut machine, &path));
+        assert_eq!(memory_card(&machine), card);
+        save_battery(&machine, &path).expect("fechar");
+        assert_eq!(std::fs::read(&path).expect("leitura"), card, "intacto");
+    }
+
+    #[test]
+    fn playstation_refuses_foreign_memory_cards_and_keeps_them() {
+        let dir = tempfile::tempdir().expect("pasta temporária");
+        let path = dir.path().join("jogo.mcr");
+        let mut machine = playstation_machine(dir.path());
+        let card = memory_card(&machine);
+        for foreign in [vec![0x33; card.len() + 1], vec![0; card.len()]] {
+            std::fs::write(&path, &foreign).expect("escrita");
+            assert!(!load_battery(&mut machine, &path));
+            assert_eq!(std::fs::read(&path).expect("leitura"), foreign);
+        }
+
+        let disc = dir.path().join("jogo.cue");
+        let check = |bytes: &[u8]| check_battery_save(&disc, System::PlayStation, bytes);
+        assert!(check(&card).is_ok(), "não precisa ler o disco");
+        assert!(matches!(
+            check(&card[..1000]),
+            Err(BatterySaveError::MemoryCard(
+                psx::MemoryCardError::WrongSize(1000)
+            ))
+        ));
+        assert!(matches!(
+            check(&vec![0; card.len()]),
+            Err(BatterySaveError::MemoryCard(
+                psx::MemoryCardError::NotFormatted
+            ))
+        ));
+    }
+
+    #[test]
+    fn playstation_needs_a_bios_of_the_right_size() {
+        let dir = tempfile::tempdir().expect("pasta temporária");
+        let disc = dir.path().join("jogo.bin");
+        std::fs::write(&disc, vec![0; 2352]).expect("escrita");
+        assert!(matches!(
+            load_machine(&disc, System::PlayStation, None, 48_000),
+            Err(PlayerError::MissingBios)
+        ));
+        let bios = dir.path().join("bios.bin");
+        std::fs::write(&bios, [0; 100]).expect("escrita");
+        assert!(matches!(
+            load_machine(&disc, System::PlayStation, Some(&bios), 48_000),
+            Err(PlayerError::Rom(MachineError::Bios(_)))
+        ));
+        assert!(check_bios(System::PlayStation, &[0; 100]).is_err());
+        assert!(check_bios(System::PlayStation, &[0; 512 * 1024]).is_ok());
+        assert!(check_bios(System::GameBoy, &[]).is_ok(), "não usa BIOS");
     }
 }

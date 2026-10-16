@@ -29,6 +29,8 @@ const SMS: Console = {
   unitsSold: 13_000_000,
   supported: true,
   playable: true,
+  needsBios: false,
+  resumable: true,
 };
 
 const DEFAULTS: Bindings = {
@@ -347,6 +349,59 @@ describe("ControlsDialog", () => {
     expect(saveMock).toHaveBeenCalledWith("game-boy", {
       ...gameBoy,
       select: "KeyJ",
+    });
+  });
+
+  it("playstation mostra os botões frontais, os gatilhos, Start e Select", async () => {
+    const playstation: Bindings = {
+      up: "ArrowUp",
+      down: "ArrowDown",
+      left: "ArrowLeft",
+      right: "ArrowRight",
+      cross: "KeyZ",
+      circle: "KeyX",
+      square: "KeyA",
+      triangle: "KeyS",
+      l1: "KeyQ",
+      r1: "KeyW",
+      l2: "Digit1",
+      r2: "Digit2",
+      start: "Enter",
+      select: "ShiftRight",
+    };
+    getMock.mockResolvedValue({
+      actions: Object.keys(playstation) as ControlsInfo["actions"],
+      bindings: playstation,
+      defaults: playstation,
+      supportedKeys: [...Object.values(playstation), "KeyJ"],
+    });
+    render(
+      <ControlsDialog
+        console={{ ...SMS, id: "playstation", name: "PlayStation" }}
+        onClose={vi.fn()}
+      />,
+    );
+
+    await screen.findByRole("button", { name: "Xis: Z" });
+    for (const name of [
+      "Círculo: X",
+      "Quadrado: A",
+      "Triângulo: S",
+      "L1: Q",
+      "R1: W",
+      "L2: 1",
+      "R2: 2",
+      "Start: Enter",
+      "Select: Shift direito",
+    ]) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: "Triângulo: S" }));
+    pressKey("KeyJ");
+    expect(saveMock).toHaveBeenCalledWith("playstation", {
+      ...playstation,
+      triangle: "KeyJ",
     });
   });
 });

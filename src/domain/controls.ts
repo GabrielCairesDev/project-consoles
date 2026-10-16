@@ -16,6 +16,14 @@ export const CONTROL_ACTIONS = [
   "start",
   "mode",
   "select",
+  "cross",
+  "circle",
+  "square",
+  "triangle",
+  "l1",
+  "r1",
+  "l2",
+  "r2",
 ] as const;
 
 export type ControlAction = (typeof CONTROL_ACTIONS)[number];
@@ -52,6 +60,14 @@ export const ACTION_LABELS: Record<ControlAction, string> = {
   start: "Start",
   mode: "Mode",
   select: "Select",
+  cross: "Xis",
+  circle: "Círculo",
+  square: "Quadrado",
+  triangle: "Triângulo",
+  l1: "L1",
+  r1: "R1",
+  l2: "L2",
+  r2: "R2",
 };
 
 const SPECIAL_KEYS: Record<string, { label: string; name: string }> = {

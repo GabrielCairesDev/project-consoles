@@ -2,7 +2,8 @@
 //! extensões próprias, formato de normalização e DAT No-Intro embutido.
 //!
 //! Cada extensão pertence a um único sistema; ela define como normalizar os
-//! bytes. A identificação final consulta os DATs de todos os sistemas, então
+//! bytes. Discos (PlayStation) não têm DAT embutido: o jogo vem do `.cue` e
+//! o título do nome do arquivo. A identificação final consulta os DATs de todos os sistemas, então
 //! uma ROM com extensão trocada ainda é reconhecida.
 //!
 //! DATs: libretro-database (CC-BY-SA 4.0); ver `data/dats/SOURCES.md`.
@@ -34,14 +35,17 @@ pub struct System {
     pub format: RomFormat,
     /// O sistema guarda um ícone dentro da ROM que serve de capa reserva.
     pub has_embedded_icon: bool,
-    dat: &'static str,
+    /// DAT No-Intro embutido; `None` para sistemas reconhecidos só pela
+    /// extensão.
+    dat: Option<&'static str>,
     index: OnceLock<DatIndex>,
 }
 
 impl System {
     /// Índice do DAT, montado na primeira consulta e reutilizado depois.
     pub fn dat_index(&self) -> &DatIndex {
-        self.index.get_or_init(|| dat::parse(self.dat))
+        self.index
+            .get_or_init(|| dat::parse(self.dat.unwrap_or_default()))
     }
 
     /// `true` se a extensão é deste sistema.
@@ -69,7 +73,7 @@ const fn system(
     extensions: &'static [&'static str],
     format: RomFormat,
     has_embedded_icon: bool,
-    dat: &'static str,
+    dat: Option<&'static str>,
 ) -> System {
     System {
         console_id,
@@ -82,14 +86,14 @@ const fn system(
     }
 }
 
-static SYSTEMS: [System; 10] = [
+static SYSTEMS: [System; 11] = [
     system(
         "master-system",
         "Sega - Master System - Mark III",
         &["sms"],
         RomFormat::Plain,
         false,
-        dat_file!("Sega - Master System - Mark III"),
+        Some(dat_file!("Sega - Master System - Mark III")),
     ),
     system(
         "mega-drive",
@@ -97,7 +101,7 @@ static SYSTEMS: [System; 10] = [
         &["md", "gen", "bin"],
         RomFormat::Plain,
         false,
-        dat_file!("Sega - Mega Drive - Genesis"),
+        Some(dat_file!("Sega - Mega Drive - Genesis")),
     ),
     system(
         "game-boy",
@@ -105,7 +109,7 @@ static SYSTEMS: [System; 10] = [
         &["gb"],
         RomFormat::Plain,
         false,
-        dat_file!("Nintendo - Game Boy"),
+        Some(dat_file!("Nintendo - Game Boy")),
     ),
     system(
         "game-gear",
@@ -113,7 +117,7 @@ static SYSTEMS: [System; 10] = [
         &["gg"],
         RomFormat::Plain,
         false,
-        dat_file!("Sega - Game Gear"),
+        Some(dat_file!("Sega - Game Gear")),
     ),
     system(
         "snes",
@@ -121,7 +125,7 @@ static SYSTEMS: [System; 10] = [
         &["sfc", "smc"],
         RomFormat::Snes,
         false,
-        dat_file!("Nintendo - Super Nintendo Entertainment System"),
+        Some(dat_file!("Nintendo - Super Nintendo Entertainment System")),
     ),
     system(
         "nintendo-64",
@@ -129,7 +133,7 @@ static SYSTEMS: [System; 10] = [
         &["z64", "n64", "v64"],
         RomFormat::N64,
         false,
-        dat_file!("Nintendo - Nintendo 64"),
+        Some(dat_file!("Nintendo - Nintendo 64")),
     ),
     system(
         "game-boy-color",
@@ -137,7 +141,7 @@ static SYSTEMS: [System; 10] = [
         &["gbc"],
         RomFormat::Plain,
         false,
-        dat_file!("Nintendo - Game Boy Color"),
+        Some(dat_file!("Nintendo - Game Boy Color")),
     ),
     system(
         "game-boy-advance",
@@ -145,7 +149,7 @@ static SYSTEMS: [System; 10] = [
         &["gba"],
         RomFormat::Plain,
         false,
-        dat_file!("Nintendo - Game Boy Advance"),
+        Some(dat_file!("Nintendo - Game Boy Advance")),
     ),
     system(
         "nintendo-ds",
@@ -153,7 +157,7 @@ static SYSTEMS: [System; 10] = [
         &["nds"],
         RomFormat::Plain,
         true,
-        dat_file!("Nintendo - Nintendo DS"),
+        Some(dat_file!("Nintendo - Nintendo DS")),
     ),
     system(
         "nintendo-3ds",
@@ -161,7 +165,17 @@ static SYSTEMS: [System; 10] = [
         &["3ds", "cci"],
         RomFormat::Plain,
         false,
-        dat_file!("Nintendo - Nintendo 3DS"),
+        Some(dat_file!("Nintendo - Nintendo 3DS")),
+    ),
+    // Só o `.cue`: o `.bin` do disco é do Mega Drive na varredura, e os
+    // `.bin` grandes nem são lidos.
+    system(
+        "playstation",
+        "Sony - PlayStation",
+        &["cue"],
+        RomFormat::Plain,
+        false,
+        None,
     ),
 ];
 
@@ -211,7 +225,7 @@ mod tests {
 
     #[test]
     fn every_embedded_dat_parses_into_a_non_empty_index() {
-        for system in all() {
+        for system in all().iter().filter(|s| s.dat.is_some()) {
             assert!(
                 system.dat_index().len() > 100,
                 "{}: DAT vazio ou ilegível",
@@ -263,8 +277,12 @@ mod tests {
     }
 
     #[test]
-    fn disc_consoles_are_not_supported_yet() {
-        assert!(for_console("playstation").is_none());
+    fn playstation_discs_are_found_by_their_cue_sheet() {
+        let playstation = for_console("playstation").expect("PlayStation é suportado");
+        assert!(playstation.accepts("CUE"));
+        assert!(!playstation.accepts("bin"), "o .bin é do Mega Drive");
+        assert_eq!(playstation.dat_index().len(), 0, "sem DAT");
+        assert!(for_console("playstation-2").is_none());
         assert!(for_console("inexistente").is_none());
     }
 }

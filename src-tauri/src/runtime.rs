@@ -26,6 +26,8 @@ pub const KEYS_FLAG: &str = "--keys";
 pub const STATE_FLAG: &str = "--state";
 /// Argumento com o arquivo do save do próprio jogo (RAM com bateria).
 pub const BATTERY_FLAG: &str = "--sav";
+/// Argumento com o BIOS do console (o PlayStation precisa dele).
+pub const BIOS_FLAG: &str = "--bios";
 
 /// Núcleo que roda jogos deste console, se houver.
 pub fn system_for(console_id: &str) -> Option<System> {
@@ -84,6 +86,8 @@ pub struct LaunchOptions {
     pub state_path: Option<PathBuf>,
     /// Save do próprio jogo: carregado ao abrir e gravado ao fechar.
     pub battery_path: Option<PathBuf>,
+    /// BIOS do console, para os que precisam dele.
+    pub bios_path: Option<PathBuf>,
 }
 
 type CommandBuilder = Box<dyn Fn(&Path, &LaunchOptions) -> io::Result<Command> + Send + Sync>;
@@ -117,6 +121,9 @@ fn play_command(exe: &Path, rom: &Path, options: &LaunchOptions) -> Command {
     }
     if let Some(battery) = &options.battery_path {
         command.arg(BATTERY_FLAG).arg(battery);
+    }
+    if let Some(bios) = &options.bios_path {
+        command.arg(BIOS_FLAG).arg(bios);
     }
     command
 }
@@ -223,6 +230,7 @@ pub(crate) mod tests {
             bindings: Bindings::defaults(System::MasterSystem),
             state_path: None,
             battery_path: None,
+            bios_path: None,
         }
     }
 
@@ -309,6 +317,16 @@ pub(crate) mod tests {
                 "/dados/sonic.sav"
             ]
         );
+        let with_bios = LaunchOptions {
+            bindings: Bindings::defaults(System::PlayStation),
+            bios_path: Some(PathBuf::from("/dados/bios/playstation.bin")),
+            ..options()
+        };
+        let args = args(&with_bios);
+        assert_eq!(
+            args[args.len() - 2..],
+            [BIOS_FLAG, "/dados/bios/playstation.bin"]
+        );
     }
 
     #[test]
@@ -316,6 +334,7 @@ pub(crate) mod tests {
         assert_eq!(system_for("master-system"), Some(System::MasterSystem));
         assert_eq!(system_for("mega-drive"), Some(System::Genesis));
         assert_eq!(system_for("game-boy"), Some(System::GameBoy));
+        assert_eq!(system_for("playstation"), Some(System::PlayStation));
         assert!(!is_playable("game-boy-color"));
         assert!(!is_playable("snes"));
         assert!(!is_playable(""));

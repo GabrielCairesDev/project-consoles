@@ -3009,6 +3009,7 @@ dependencies = [
  "cpal",
  "gameboy",
  "genesis",
+ "psx",
  "sms",
  "softbuffer",
  "tempfile",

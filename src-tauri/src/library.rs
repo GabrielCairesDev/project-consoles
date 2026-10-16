@@ -410,6 +410,30 @@ mod tests {
     }
 
     #[test]
+    fn playstation_discs_are_listed_by_their_cue_sheet() {
+        let dir = tempfile::tempdir().expect("pasta");
+        let disc = dir.path().join("PS1/Crash Bandicoot (USA)");
+        std::fs::create_dir_all(&disc).expect("pasta");
+        write(
+            &disc,
+            "Crash Bandicoot (USA).cue",
+            b"FILE \"Crash Bandicoot (USA).bin\" BINARY",
+        );
+        write(&disc, "Crash Bandicoot (USA).bin", &[0; 2352]);
+        let games =
+            scan(dir.path(), &mut FingerprintCache::default(), dat(&[])).expect("varredura");
+        assert_eq!(games.len(), 1, "o .bin do disco não é outro jogo");
+        let crash = &games[0];
+        assert_eq!(crash.console_id, "playstation");
+        assert_eq!(crash.title, "Crash Bandicoot (USA)");
+        assert_eq!(
+            crash.id,
+            "PS1/Crash Bandicoot (USA)/Crash Bandicoot (USA).cue"
+        );
+        assert!(!crash.recognized);
+    }
+
+    #[test]
     fn missing_folder_is_an_error() {
         let result = scan(
             Path::new("/caminho/que/nao/existe"),

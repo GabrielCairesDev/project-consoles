@@ -36,6 +36,8 @@ fn extensions(system: System) -> &'static [&'static str] {
         System::MasterSystem => &["sms"],
         System::Genesis => &["md", "gen", "bin", "smd"],
         System::GameBoy => &["gb"],
+        // Discos são abertos pelo núcleo (`psx::Disc`), não lidos como ROM.
+        System::PlayStation => &[],
     }
 }
 

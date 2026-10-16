@@ -58,6 +58,8 @@ const GBA: Console = {
   unitsSold: 81_510_000,
   supported: true,
   playable: false,
+  needsBios: false,
+  resumable: true,
 };
 
 const SCAN: LibraryScan = {
@@ -308,6 +310,8 @@ describe("ConsoleGamesPage", () => {
       releaseYear: 1985,
       kind: "home",
       playable: true,
+      needsBios: false,
+      resumable: true,
     };
     const SMS_SCAN: LibraryScan = {
       folder: "/Jogos",

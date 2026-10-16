@@ -6,11 +6,13 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use player::controls::{Bindings, System};
-use project_consoles_lib::runtime::{BATTERY_FLAG, CONSOLE_FLAG, KEYS_FLAG, PLAY_FLAG, STATE_FLAG};
+use project_consoles_lib::runtime::{
+    BATTERY_FLAG, BIOS_FLAG, CONSOLE_FLAG, KEYS_FLAG, PLAY_FLAG, STATE_FLAG,
+};
 
 /// O mesmo binário é o launcher e, com
-/// `--play <rom> --console <id> [--keys <mapa>] [--state <arquivo>]`, o
-/// processo do jogo
+/// `--play <rom> --console <id> [--keys <mapa>] [--state <arquivo>]
+/// [--sav <arquivo>] [--bios <arquivo>]`, o processo do jogo
 /// (ver `crates/player`): sem sidecar, igual em dev e no pacote final.
 fn main() -> ExitCode {
     let mut args = std::env::args_os().skip(1);
@@ -33,6 +35,7 @@ fn main() -> ExitCode {
         options.bindings,
         options.state,
         options.battery,
+        options.bios,
     ) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -46,17 +49,19 @@ struct PlayOptions {
     bindings: Bindings,
     state: Option<PathBuf>,
     battery: Option<PathBuf>,
+    bios: Option<PathBuf>,
 }
 
-/// `--console <id>` (obrigatório), `--keys <mapa>`, `--state <arquivo>` e
-/// `--sav <arquivo>`; sem `--keys` valem as teclas padrão do console, sem
-/// `--state` o progresso não é salvo e sem `--sav` o save do jogo também
-/// não.
+/// `--console <id>` (obrigatório), `--keys <mapa>`, `--state <arquivo>`,
+/// `--sav <arquivo>` e `--bios <arquivo>`; sem `--keys` valem as teclas
+/// padrão do console, sem `--state` o progresso não é salvo e sem `--sav` o
+/// save do jogo também não.
 fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions, String> {
     let mut system = None;
     let mut keys = None;
     let mut state = None;
     let mut battery = None;
+    let mut bios = None;
     while let Some(flag) = args.next() {
         let value = args
             .next()
@@ -70,6 +75,8 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
             state = Some(PathBuf::from(value));
         } else if flag == BATTERY_FLAG {
             battery = Some(PathBuf::from(value));
+        } else if flag == BIOS_FLAG {
+            bios = Some(PathBuf::from(value));
         } else {
             return Err(format!(
                 "argumento desconhecido: {}",
@@ -86,12 +93,13 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
         bindings,
         state,
         battery,
+        bios,
     })
 }
 
 fn usage() -> ExitCode {
     eprintln!(
-        "uso: {PLAY_FLAG} <caminho da ROM> {CONSOLE_FLAG} <id> [{KEYS_FLAG} <ação=tecla,...>] [{STATE_FLAG} <arquivo>] [{BATTERY_FLAG} <arquivo>]"
+        "uso: {PLAY_FLAG} <caminho da ROM> {CONSOLE_FLAG} <id> [{KEYS_FLAG} <ação=tecla,...>] [{STATE_FLAG} <arquivo>] [{BATTERY_FLAG} <arquivo>] [{BIOS_FLAG} <arquivo>]"
     );
     ExitCode::from(2)
 }

@@ -22,6 +22,46 @@
     pulse var(--duration-pulse) ease-in-out var(--loading-delay) infinite;
 }
 
+.bios {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.biosText {
+  display: flex;
+  flex: 1 1 16rem;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.biosStatus {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--color-warning);
+  font-weight: var(--font-weight-semibold);
+}
+
+.biosStatus[data-installed] {
+  color: var(--color-success);
+}
+
+.biosIcon {
+  flex: none;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+}
+
+.biosHelp {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
 .failure {
   display: flex;
   flex-direction: column;

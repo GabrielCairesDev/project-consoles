@@ -36,7 +36,9 @@ export function ConsoleGamesPage({ console, onBack }: ConsoleGamesPageProps) {
   const [controlsOpen, setControlsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const consoleSettings = useConsoleSettings(console.id, console.playable);
+  // Sem suporte no núcleo (PlayStation), o jogo sempre começa do início.
   const resume =
+    console.resumable &&
     consoleSettings.state.status === "ready" &&
     consoleSettings.state.settings.resume;
 

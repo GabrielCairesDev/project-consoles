@@ -6,6 +6,7 @@ import { sameBindings } from "../../domain/controls";
 import { GameBoyController } from "./GameBoyController";
 import { GenesisController } from "./GenesisController";
 import type { ControllerProps } from "./KeyButton";
+import { PlayStationController } from "./PlayStationController";
 import { SmsController } from "./SmsController";
 import { useControls } from "./useControls";
 import styles from "./ControlsDialog.module.css";
@@ -18,6 +19,7 @@ const CONTROLLERS: Record<
   "master-system": SmsController,
   "mega-drive": GenesisController,
   "game-boy": GameBoyController,
+  playstation: PlayStationController,
 };
 
 interface ControlsDialogProps {

@@ -16,10 +16,16 @@ pub enum System {
     MasterSystem,
     Genesis,
     GameBoy,
+    PlayStation,
 }
 
 impl System {
-    pub const ALL: [System; 3] = [System::MasterSystem, System::Genesis, System::GameBoy];
+    pub const ALL: [System; 4] = [
+        System::MasterSystem,
+        System::Genesis,
+        System::GameBoy,
+        System::PlayStation,
+    ];
 
     /// Identificador do console no catálogo do launcher.
     pub fn id(self) -> &'static str {
@@ -27,11 +33,22 @@ impl System {
             System::MasterSystem => "master-system",
             System::Genesis => "mega-drive",
             System::GameBoy => "game-boy",
+            System::PlayStation => "playstation",
         }
     }
 
     pub fn from_id(id: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|s| s.id() == id)
+    }
+
+    /// O console só liga com o BIOS do usuário (o da Sony é proprietário).
+    pub fn needs_bios(self) -> bool {
+        self == System::PlayStation
+    }
+
+    /// O núcleo sabe salvar o estado ("continuar de onde parou").
+    pub fn saves_state(self) -> bool {
+        self != System::PlayStation
     }
 
     /// Ações do controle, na ordem exibida.
@@ -89,6 +106,30 @@ impl System {
                     "ShiftRight",
                 ],
             ),
+            // Botões frontais na mesma posição do controle: Quadrado e
+            // Triângulo em cima (A, S), X e Círculo embaixo (Z, X).
+            System::PlayStation => (
+                &[
+                    Up, Down, Left, Right, Cross, Circle, Square, Triangle, L1, R1, L2, R2, Start,
+                    Select,
+                ],
+                &[
+                    "ArrowUp",
+                    "ArrowDown",
+                    "ArrowLeft",
+                    "ArrowRight",
+                    "KeyZ",
+                    "KeyX",
+                    "KeyA",
+                    "KeyS",
+                    "KeyQ",
+                    "KeyW",
+                    "Digit1",
+                    "Digit2",
+                    "Enter",
+                    "ShiftRight",
+                ],
+            ),
         }
     }
 }
@@ -112,10 +153,18 @@ pub enum Action {
     Start,
     Mode,
     Select,
+    Cross,
+    Circle,
+    Square,
+    Triangle,
+    L1,
+    R1,
+    L2,
+    R2,
 }
 
 impl Action {
-    pub const ALL: [Action; 16] = [
+    pub const ALL: [Action; 24] = [
         Action::Up,
         Action::Down,
         Action::Left,
@@ -132,6 +181,14 @@ impl Action {
         Action::Start,
         Action::Mode,
         Action::Select,
+        Action::Cross,
+        Action::Circle,
+        Action::Square,
+        Action::Triangle,
+        Action::L1,
+        Action::R1,
+        Action::L2,
+        Action::R2,
     ];
 
     /// Identificador estável, usado nas preferências e na interface.
@@ -153,6 +210,14 @@ impl Action {
             Action::Start => "start",
             Action::Mode => "mode",
             Action::Select => "select",
+            Action::Cross => "cross",
+            Action::Circle => "circle",
+            Action::Square => "square",
+            Action::Triangle => "triangle",
+            Action::L1 => "l1",
+            Action::R1 => "r1",
+            Action::L2 => "l2",
+            Action::R2 => "r2",
         }
     }
 
@@ -393,6 +458,17 @@ mod tests {
         assert_eq!(b.key(Action::B), Some("KeyZ"));
         assert_eq!(b.action_for(KeyCode::ShiftRight), Some(Action::Select));
         assert_eq!(b.key(Action::Mode), None);
+    }
+
+    #[test]
+    fn playstation_defaults_mirror_the_face_buttons() {
+        let b = Bindings::defaults(System::PlayStation);
+        assert_eq!(b.key(Action::Cross), Some("KeyZ"));
+        assert_eq!(b.key(Action::Triangle), Some("KeyS"));
+        assert_eq!(b.key(Action::R2), Some("Digit2"));
+        assert_eq!(b.action_for(KeyCode::Enter), Some(Action::Start));
+        assert_eq!(b.key(Action::A), None);
+        assert_eq!(System::from_id("playstation"), Some(System::PlayStation));
     }
 
     #[test]

@@ -9,6 +9,7 @@ use player::controls::{Bindings, SUPPORTED_KEYS, System};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
+use crate::bios::BiosStore;
 use crate::catalog::{self, Console};
 use crate::covers::{Cover, CoverStore, LibretroThumbnails};
 use crate::library::{self, FingerprintCache, Game};
@@ -30,6 +31,7 @@ pub struct AppState {
     boxarts: LibretroThumbnails,
     runner: Runner,
     saves: SaveStore,
+    bios: BiosStore,
 }
 
 impl AppState {
@@ -54,6 +56,7 @@ impl AppState {
             boxarts: LibretroThumbnails::default(),
             runner: Runner::default(),
             saves: SaveStore::new(data_dir.join("saves")),
+            bios: BiosStore::new(data_dir.join("bios")),
         }
     }
 }
@@ -77,6 +80,11 @@ pub struct ConsoleInfo {
     supported: bool,
     /// O app consegue rodar jogos deste console.
     playable: bool,
+    /// Os jogos só rodam com o BIOS do usuário (escolhido nas
+    /// configurações do console).
+    needs_bios: bool,
+    /// O núcleo sabe "continuar de onde parou".
+    resumable: bool,
 }
 
 /// Lista o catálogo de consoles para a interface.
@@ -84,10 +92,15 @@ pub struct ConsoleInfo {
 pub fn list_consoles() -> Vec<ConsoleInfo> {
     catalog::consoles()
         .iter()
-        .map(|&console| ConsoleInfo {
-            console,
-            supported: systems::for_console(console.id).is_some(),
-            playable: runtime::is_playable(console.id),
+        .map(|&console| {
+            let system = runtime::system_for(console.id);
+            ConsoleInfo {
+                console,
+                supported: systems::for_console(console.id).is_some(),
+                playable: system.is_some(),
+                needs_bios: system.is_some_and(System::needs_bios),
+                resumable: system.is_some_and(System::saves_state),
+            }
         })
         .collect()
 }
@@ -214,24 +227,7 @@ pub async fn launch_game(
         .get(&game_id)
         .cloned()
         .ok_or_else(|| "Jogo não encontrado; atualize a biblioteca.".to_owned())?;
-    let system = runtime::system_for(&game.console_id)
-        .ok_or_else(|| "Ainda não é possível jogar títulos deste console.".to_owned())?;
-    let (bindings, console_settings) = {
-        let settings = lock(&state.settings);
-        let bindings = settings.controls_for(system).unwrap_or_else(|error| {
-            eprintln!("controles salvos inválidos ({error}); usando o padrão");
-            Bindings::defaults(system)
-        });
-        (bindings, settings.console(&game.console_id))
-    };
-    let options = LaunchOptions {
-        bindings,
-        // Desligado: o jogo começa do início e não grava progresso; o que já
-        // estava salvo fica intacto para quando a opção voltar.
-        state_path: console_settings.resume.then(|| state.saves.path_for(&game)),
-        // O save do próprio jogo vale sempre, com ou sem "continuar".
-        battery_path: Some(state.saves.battery_path_for(&game)),
-    };
+    let options = launch_options(&state, &game)?;
     let state = Arc::clone(&state);
 
     tauri::async_runtime::spawn_blocking(move || {
@@ -254,6 +250,41 @@ pub async fn launch_game(
     })
     .await
     .map_err(|error| format!("Falha interna: {error}"))?
+}
+
+/// Teclas, arquivos de save e BIOS com que o jogo vai rodar.
+fn launch_options(state: &AppState, game: &Game) -> CommandResult<LaunchOptions> {
+    let system = runtime::system_for(&game.console_id)
+        .ok_or_else(|| "Ainda não é possível jogar títulos deste console.".to_owned())?;
+    let (bindings, console_settings) = {
+        let settings = lock(&state.settings);
+        let bindings = settings.controls_for(system).unwrap_or_else(|error| {
+            eprintln!("controles salvos inválidos ({error}); usando o padrão");
+            Bindings::defaults(system)
+        });
+        (bindings, settings.console(&game.console_id))
+    };
+    let bios_path = if system.needs_bios() {
+        if !state.bios.installed(system) {
+            return Err(
+                "Escolha o BIOS do console em Configurações para jogar este título.".to_owned(),
+            );
+        }
+        Some(state.bios.path_for(system))
+    } else {
+        None
+    };
+    let options = LaunchOptions {
+        bindings,
+        // Desligado (ou sem suporte no núcleo): o jogo começa do início e
+        // não grava progresso; o que já estava salvo fica intacto.
+        state_path: (console_settings.resume && system.saves_state())
+            .then(|| state.saves.path_for(game)),
+        // O save do próprio jogo vale sempre, com ou sem "continuar".
+        battery_path: Some(state.saves.battery_path_for(game)),
+        bios_path,
+    };
+    Ok(options)
 }
 
 /// Teclas de um console, para a tela de configuração de controles.
@@ -440,6 +471,51 @@ pub async fn set_console_settings(
     .map_err(|error| format!("Falha interna: {error}"))?
 }
 
+/// BIOS de um console, para a tela de configurações.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct BiosStatus {
+    installed: bool,
+}
+
+fn bios_system(console_id: &str) -> CommandResult<System> {
+    runtime::system_for(console_id)
+        .filter(|system| system.needs_bios())
+        .ok_or_else(|| "Este console não usa BIOS.".to_owned())
+}
+
+/// Se o BIOS do console já foi escolhido.
+#[tauri::command]
+pub fn get_bios(console_id: String, state: State<'_, Arc<AppState>>) -> CommandResult<BiosStatus> {
+    let system = bios_system(&console_id)?;
+    Ok(BiosStatus {
+        installed: state.bios.installed(system),
+    })
+}
+
+/// Confere `source` e o instala como BIOS do console. Recusado, o BIOS
+/// anterior continua.
+#[tauri::command]
+pub async fn set_bios(
+    console_id: String,
+    source: PathBuf,
+    state: State<'_, Arc<AppState>>,
+) -> CommandResult<BiosStatus> {
+    let system = bios_system(&console_id)?;
+    let state = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || install_bios(&state, system, &source))
+        .await
+        .map_err(|error| format!("Falha interna: {error}"))?
+}
+
+fn install_bios(state: &AppState, system: System, source: &Path) -> CommandResult<BiosStatus> {
+    state
+        .bios
+        .install(system, source)
+        .map_err(|error| format!("BIOS não instalado: {error}."))?;
+    Ok(BiosStatus { installed: true })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -447,14 +523,23 @@ mod tests {
 
     use crate::runtime::tests::fake_process;
 
-    /// Um cartucho com save de cada console: ROM mínima, tamanho do `.sav`
-    /// e um tamanho que o cartucho não aceita.
+    /// Um jogo com save de cada console: ROM mínima (ou o `.cue`), tamanho
+    /// do save, um tamanho que o jogo não aceita e o começo obrigatório do
+    /// save (o memory card formatado começa com "MC").
     struct Cartridge {
         console_id: &'static str,
         file_name: &'static str,
         rom: Vec<u8>,
         save_size: usize,
         wrong_size: usize,
+        header: &'static [u8],
+    }
+
+    /// Save válido do jogo, preenchido com `fill`.
+    fn save_bytes(cart: &Cartridge, fill: u8) -> Vec<u8> {
+        let mut bytes = vec![fill; cart.save_size];
+        bytes[..cart.header.len()].copy_from_slice(cart.header);
+        bytes
     }
 
     fn cartridges() -> Vec<Cartridge> {
@@ -470,6 +555,7 @@ mod tests {
                 rom: game_boy,
                 save_size: 0x2000,
                 wrong_size: 0x8000,
+                header: b"",
             },
             Cartridge {
                 console_id: "mega-drive",
@@ -477,6 +563,7 @@ mod tests {
                 rom: genesis,
                 save_size: 0x1_0000,
                 wrong_size: 0x2000,
+                header: b"",
             },
             Cartridge {
                 console_id: "master-system",
@@ -484,6 +571,15 @@ mod tests {
                 rom: vec![0x18, 0xFE],
                 save_size: 0x8000,
                 wrong_size: 0x6000,
+                header: b"",
+            },
+            Cartridge {
+                console_id: "playstation",
+                file_name: "Crash Bandicoot (USA).cue",
+                rom: b"FILE \"Crash Bandicoot (USA).bin\" BINARY\n".to_vec(),
+                save_size: 128 * 1024,
+                wrong_size: 64 * 1024,
+                header: b"MC",
             },
         ]
     }
@@ -528,7 +624,7 @@ mod tests {
             );
 
             // Save de outro emulador entra pelo import.
-            let foreign = write(dir.path(), "de-fora.sav", &vec![0x11; cart.save_size]);
+            let foreign = write(dir.path(), "de-fora.sav", &save_bytes(&cart, 0x11));
             import_save(&state, &game.id, &foreign).expect(console);
             assert!(state.saves.battery_exists(&game), "{console}");
 
@@ -537,7 +633,7 @@ mod tests {
             state.saves.export_battery(&game, &exported).expect(console);
             assert_eq!(
                 fs::read(&exported).expect("leitura"),
-                vec![0x11; cart.save_size],
+                save_bytes(&cart, 0x11),
                 "{console}"
             );
 
@@ -546,7 +642,7 @@ mod tests {
             import_save(&state, &game.id, &exported).expect(console);
             assert_eq!(
                 fs::read(&installed).expect("leitura"),
-                vec![0x11; cart.save_size]
+                save_bytes(&cart, 0x11)
             );
         }
     }
@@ -556,7 +652,7 @@ mod tests {
         for cart in cartridges() {
             let dir = tempfile::tempdir().expect("pasta");
             let (state, game) = state_with(dir.path(), &cart, Runner::default());
-            let source = write(dir.path(), "save.sav", &vec![0x22; cart.save_size]);
+            let source = write(dir.path(), "save.sav", &save_bytes(&cart, 0x22));
             import_save(&state, &game.id, &source).expect(cart.console_id);
             let resume = state.saves.path_for(&game);
             fs::write(&resume, b"estado").expect("estado");
@@ -567,7 +663,7 @@ mod tests {
             assert!(!resume.exists(), "{}", cart.console_id);
             assert_eq!(
                 fs::read(state.saves.battery_path_for(&game)).expect("save mantido"),
-                vec![0x22; cart.save_size],
+                save_bytes(&cart, 0x22),
                 "{}",
                 cart.console_id
             );
@@ -580,7 +676,7 @@ mod tests {
             let dir = tempfile::tempdir().expect("pasta");
             let (state, game) = state_with(dir.path(), &cart, Runner::default());
             let console = cart.console_id;
-            let good = write(dir.path(), "bom.sav", &vec![0x5A; cart.save_size]);
+            let good = write(dir.path(), "bom.sav", &save_bytes(&cart, 0x5A));
             import_save(&state, &game.id, &good).expect(console);
             let installed = state.saves.battery_path_for(&game);
 
@@ -603,7 +699,7 @@ mod tests {
 
             assert_eq!(
                 fs::read(&installed).expect("leitura"),
-                vec![0x5A; cart.save_size],
+                save_bytes(&cart, 0x5A),
                 "{console}: save existente intacto"
             );
             assert!(!installed.with_extension("sav.tmp").exists(), "{console}");
@@ -635,6 +731,7 @@ mod tests {
             rom: vec![0; 0x400], // sem "RA": não há SRAM
             save_size: 0,
             wrong_size: 0,
+            header: b"",
         };
         let dir = tempfile::tempdir().expect("pasta");
         let (state, game) = state_with(dir.path(), &cart, Runner::default());
@@ -664,6 +761,7 @@ mod tests {
             bindings: Bindings::defaults(System::GameBoy),
             state_path: None,
             battery_path: None,
+            bios_path: None,
         };
         state
             .runner
@@ -677,5 +775,54 @@ mod tests {
             fs::read(state.saves.battery_path_for(&game)).expect("leitura"),
             [0x11; 0x2000]
         );
+    }
+
+    #[test]
+    fn playstation_needs_the_bios_and_does_not_resume_yet() {
+        let dir = tempfile::tempdir().expect("pasta");
+        let cart = cartridges()
+            .into_iter()
+            .find(|c| c.console_id == "playstation")
+            .expect("PS1");
+        let (state, game) = state_with(dir.path(), &cart, Runner::default());
+        let error = launch_options(&state, &game).expect_err("sem BIOS");
+        assert!(error.contains("BIOS"), "{error}");
+
+        let wrong = write(dir.path(), "errado.bin", &[0; 1000]);
+        assert!(install_bios(&state, System::PlayStation, &wrong).is_err());
+        let bios = write(dir.path(), "SCPH1001.BIN", &vec![0; 512 * 1024]);
+        let status = install_bios(&state, System::PlayStation, &bios).expect("BIOS");
+        assert_eq!(status, BiosStatus { installed: true });
+
+        // "Continuar de onde parou" ligado (o padrão), mas o núcleo não
+        // salva estado: o jogo começa do início e o memory card vale.
+        assert!(lock(&state.settings).console("playstation").resume);
+        let options = launch_options(&state, &game).expect("com BIOS");
+        assert_eq!(
+            options.bios_path,
+            Some(state.bios.path_for(System::PlayStation))
+        );
+        assert_eq!(options.state_path, None);
+        assert_eq!(
+            options.battery_path,
+            Some(state.saves.battery_path_for(&game))
+        );
+
+        let (_, sms) = state_with(dir.path(), &cartridges()[2], Runner::default());
+        let options = launch_options(&state, &sms).expect("Master System");
+        assert_eq!(options.bios_path, None, "não usa BIOS");
+        assert!(options.state_path.is_some());
+    }
+
+    #[test]
+    fn console_list_reports_bios_and_resume_support() {
+        let consoles = list_consoles();
+        let find = |id: &str| consoles.iter().find(|c| c.console.id == id).expect(id);
+        let ps1 = find("playstation");
+        assert!(ps1.supported && ps1.playable && ps1.needs_bios && !ps1.resumable);
+        let sms = find("master-system");
+        assert!(sms.playable && !sms.needs_bios && sms.resumable);
+        let ps2 = find("playstation-2");
+        assert!(!ps2.playable && !ps2.needs_bios && !ps2.resumable);
     }
 }

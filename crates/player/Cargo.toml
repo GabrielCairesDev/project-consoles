@@ -11,6 +11,7 @@ publish = false
 sms = { path = "../sms" }
 genesis = { path = "../genesis" }
 gameboy = { path = "../gameboy" }
+psx = { path = "../psx" }
 zip = { version = "9.0.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 winit = "0.30.13"
 softbuffer = "0.4.8"

@@ -12,7 +12,7 @@
 mod memory_card;
 mod pad;
 
-pub use memory_card::{MEMORY_CARD_SIZE, MemoryCardError};
+pub use memory_card::{MEMORY_CARD_SIZE, MemoryCardError, check_memory_card};
 pub use pad::Buttons;
 
 use memory_card::MemoryCard;
@@ -67,6 +67,10 @@ impl Sio {
 
     pub(crate) fn memory_card(&self) -> &[u8] {
         self.card.data()
+    }
+
+    pub(crate) fn memory_card_written(&self) -> bool {
+        self.card.written()
     }
 
     pub(crate) fn load_memory_card(&mut self, bytes: &[u8]) -> Result<(), MemoryCardError> {
