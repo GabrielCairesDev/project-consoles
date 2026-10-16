@@ -5,9 +5,12 @@
 //! ```
 //!
 //! `GB_TESTS_DIR` deve conter `blargg/gb-test-roms-master`, `mooneye/mts-*`,
-//! `dmg-acid2.gb` e a imagem de referência `dmg-acid2-reference.png`. As duas suítes informam o resultado pela serial:
-//! Blargg escreve "Passed"/"Failed" e Mooneye envia 3, 5, 8, 13, 21, 34
-//! quando passa.
+//! `dmg-acid2.gb` e a imagem de referência `dmg-acid2-reference.png`.
+//!
+//! O resultado vem pela serial (Blargg escreve "Passed"/"Failed"; Mooneye
+//! envia 3, 5, 8, 13, 21, 34 quando passa) ou, no `dmg_sound` do Blargg,
+//! na RAM do cartucho: assinatura DE B0 61 em A001 e o código em A000
+//! (0x80 = rodando, 0 = passou).
 
 use std::path::{Path, PathBuf};
 
@@ -36,17 +39,29 @@ const KNOWN_FAILURES: &[(&str, &str)] = &[
         "flag de coincidência LY=LYC ao ligar/desligar o LCD",
     ),
     (
-        "boot_hwio-dmgABCmgb.gb",
-        "valores iniciais dos registradores de som: vêm com a APU (etapa 3)",
+        "dmg_sound/rom_singles/09-wave read while on.gb",
+        "leitura da wave RAM com o canal 3 tocando: no DMG só funciona no ciclo exato \
+         em que o canal lê a RAM",
     ),
     (
-        "bits/unused_hwio-GS.gb",
-        "bits não usados dos registradores de som: vêm com a APU (etapa 3)",
+        "dmg_sound/rom_singles/10-wave trigger while on.gb",
+        "trigger do canal 3 tocando corrompe a wave RAM no DMG (não emulado)",
+    ),
+    (
+        "dmg_sound/rom_singles/12-wave write while on.gb",
+        "escrita na wave RAM com o canal 3 tocando (mesmo caso do 09)",
     ),
 ];
 
 const MOONEYE_PASS: &[u8] = &[3, 5, 8, 13, 21, 34];
 const MAX_FRAMES: u32 = 60 * 120;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Protocol {
+    BlarggSerial,
+    BlarggMemory,
+    Mooneye,
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum Outcome {
@@ -54,7 +69,7 @@ enum Outcome {
     Fail(String),
 }
 
-fn run(path: &Path, blargg: bool) -> Outcome {
+fn run(path: &Path, protocol: Protocol) -> Outcome {
     let rom = match std::fs::read(path) {
         Ok(rom) => rom,
         Err(e) => return Outcome::Fail(format!("leitura: {e}")),
@@ -66,7 +81,21 @@ fn run(path: &Path, blargg: bool) -> Outcome {
     for _ in 0..MAX_FRAMES {
         console.run_frame();
         let out = console.serial_output();
-        if blargg {
+        if protocol == Protocol::BlarggMemory {
+            let signature = [
+                console.peek(0xA001),
+                console.peek(0xA002),
+                console.peek(0xA003),
+            ];
+            let code = console.peek(0xA000);
+            if signature == [0xDE, 0xB0, 0x61] && code != 0x80 {
+                return if code == 0 {
+                    Outcome::Pass
+                } else {
+                    Outcome::Fail(format!("código {code}"))
+                };
+            }
+        } else if protocol == Protocol::BlarggSerial {
             let text = String::from_utf8_lossy(out);
             if text.contains("Passed") {
                 return Outcome::Pass;
@@ -142,11 +171,23 @@ fn public_test_roms() {
     let blargg = base.join("blargg/gb-test-roms-master");
     let mooneye = find_dir(&base.join("mooneye"), "mts-").expect("pasta do Mooneye");
 
-    let mut cases: Vec<(PathBuf, bool)> = Vec::new();
+    let mut cases: Vec<(PathBuf, Protocol)> = Vec::new();
     for dir in ["cpu_instrs/individual", "mem_timing/individual"] {
-        cases.extend(roms_in(&blargg.join(dir)).into_iter().map(|p| (p, true)));
+        cases.extend(
+            roms_in(&blargg.join(dir))
+                .into_iter()
+                .map(|p| (p, Protocol::BlarggSerial)),
+        );
     }
-    cases.push((blargg.join("instr_timing/instr_timing.gb"), true));
+    cases.push((
+        blargg.join("instr_timing/instr_timing.gb"),
+        Protocol::BlarggSerial,
+    ));
+    cases.extend(
+        roms_in(&blargg.join("dmg_sound/rom_singles"))
+            .into_iter()
+            .map(|p| (p, Protocol::BlarggMemory)),
+    );
     for dir in [
         "acceptance",
         "acceptance/bits",
@@ -163,19 +204,19 @@ fn public_test_roms() {
             roms_in(&mooneye.join(dir))
                 .into_iter()
                 .filter(|p| mooneye_applies(p))
-                .map(|p| (p, false)),
+                .map(|p| (p, Protocol::Mooneye)),
         );
     }
 
     let mut unexpected = Vec::new();
     let mut passed = 0;
-    for (path, is_blargg) in &cases {
+    for (path, protocol) in &cases {
         let name = path
             .strip_prefix(&base)
             .unwrap_or(path)
             .to_string_lossy()
             .into_owned();
-        let outcome = run(path, *is_blargg);
+        let outcome = run(path, *protocol);
         let known = KNOWN_FAILURES.iter().find(|(n, _)| name.ends_with(n));
         match (&outcome, known) {
             (Outcome::Pass, None) => passed += 1,

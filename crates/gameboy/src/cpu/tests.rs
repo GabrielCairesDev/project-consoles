@@ -7,7 +7,10 @@ use crate::cart::Cart;
 fn machine(program: &[u8]) -> (Cpu, Bus) {
     let mut rom = vec![0; 0x8000];
     rom[0x100..0x100 + program.len()].copy_from_slice(program);
-    let mut bus = Bus::new(Cart::new(rom).expect("cartucho"));
+    let mut bus = Bus::new(
+        Cart::new(rom).expect("cartucho"),
+        crate::apu::Apu::new(44_100),
+    );
     bus.ppu.write(0xFF40, 0);
     bus.interrupt_flag = 0;
     (Cpu::default(), bus)

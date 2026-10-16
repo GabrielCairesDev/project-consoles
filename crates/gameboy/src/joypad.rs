@@ -15,20 +15,12 @@ pub struct Buttons {
     pub select: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Joypad {
     pub buttons: Buttons,
-    /// Bits 4 e 5 de P1 (0 = linha selecionada).
+    /// Bits 4 e 5 de P1 (0 = linha selecionada); a boot ROM deixa as duas
+    /// selecionadas.
     select: u8,
-}
-
-impl Default for Joypad {
-    fn default() -> Self {
-        Self {
-            buttons: Buttons::default(),
-            select: 0x30,
-        }
-    }
 }
 
 impl Joypad {
@@ -88,6 +80,7 @@ mod tests {
             start: true,
             ..Buttons::default()
         });
+        pad.write(0x30);
         assert_eq!(pad.read() & 0x0F, 0x0F, "nada selecionado");
         pad.write(0x20); // setas
         assert_eq!(pad.read(), 0xE0 | 0x0E);

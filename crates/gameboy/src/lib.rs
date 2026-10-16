@@ -7,6 +7,7 @@
 //! estado em que ela os deixa). Fora: Game Boy Color, Super Game Boy, cabo
 //! link, STOP de baixo consumo e os MBCs raros (MBC6/7, HuC, câmera).
 
+mod apu;
 mod bus;
 mod cart;
 mod cpu;
@@ -67,7 +68,6 @@ pub struct Console {
 impl Console {
     /// Liga o console com a ROM e gera áudio na taxa `sample_rate` (Hz).
     pub fn new(rom: Vec<u8>, sample_rate: u32) -> Result<Self, RomError> {
-        let _ = sample_rate; // usado pela APU (etapa de som)
         if rom.len() > MAX_ROM_SIZE {
             return Err(RomError::TooLarge(rom.len()));
         }
@@ -75,7 +75,7 @@ impl Console {
         let cart = cart::Cart::new(rom).map_err(RomError::Cart)?;
         Ok(Self {
             cpu: Cpu::default(),
-            bus: Bus::new(cart),
+            bus: Bus::new(cart, apu::Apu::new(sample_rate)),
             budget: 0,
             rom_hash,
         })
@@ -96,9 +96,10 @@ impl Console {
         self.bus.ppu.frame()
     }
 
-    /// Move o áudio gerado para `out` (estéreo intercalado).
+    /// Move o áudio gerado para `out`: estéreo intercalado (L, R), valores
+    /// em -1..1 (com o nível DC do hardware; o player o remove).
     pub fn drain_audio(&mut self, out: &mut Vec<f32>) {
-        let _ = out;
+        self.bus.apu.drain(out);
     }
 
     pub fn set_input(&mut self, buttons: Buttons) {

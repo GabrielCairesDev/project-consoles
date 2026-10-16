@@ -114,6 +114,11 @@ impl Timer {
         }
     }
 
+    /// Contador interno (o DIV é o byte alto); a APU usa o bit 12.
+    pub fn counter(&self) -> u16 {
+        self.counter
+    }
+
     /// STOP zera o divisor.
     pub fn reset_divider(&mut self) {
         self.write(0xFF04, 0);

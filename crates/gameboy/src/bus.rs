@@ -6,6 +6,7 @@
 
 use chips::state::{Reader, StateError, Writer};
 
+use crate::apu::Apu;
 use crate::cart::Cart;
 use crate::joypad::Joypad;
 use crate::ppu::Ppu;
@@ -72,8 +73,7 @@ pub struct Bus {
     pub joypad: Joypad,
     wram: Box<[u8; 0x2000]>,
     hram: [u8; 0x7F],
-    /// Registradores de som ainda sem a APU (só guardados).
-    sound: [u8; 0x30],
+    pub apu: Apu,
     serial: Serial,
     dma: Dma,
     pub interrupt_flag: u8,
@@ -83,7 +83,7 @@ pub struct Bus {
 }
 
 impl Bus {
-    pub fn new(cart: Cart) -> Self {
+    pub fn new(cart: Cart, apu: Apu) -> Self {
         Self {
             cart,
             ppu: Ppu::default(),
@@ -91,7 +91,7 @@ impl Bus {
             joypad: Joypad::default(),
             wram: Box::new([0; 0x2000]),
             hram: [0; 0x7F],
-            sound: [0; 0x30],
+            apu,
             serial: Serial::default(),
             dma: Dma::default(),
             interrupt_flag: 0x01,
@@ -111,6 +111,7 @@ impl Bus {
         if self.timer.tick() {
             self.interrupt_flag |= INT_TIMER;
         }
+        self.apu.tick(self.timer.counter() & 0x1000 != 0);
         let ppu = self.ppu.tick();
         if ppu.vblank {
             self.interrupt_flag |= INT_VBLANK;
@@ -224,7 +225,7 @@ impl Bus {
             0xFF02 => self.serial.control | 0x7E,
             0xFF04..=0xFF07 => self.timer.read(addr),
             0xFF0F => self.interrupt_flag | 0xE0,
-            0xFF10..=0xFF3F => self.sound[usize::from(addr - 0xFF10)],
+            0xFF10..=0xFF3F => self.apu.read(addr),
             0xFF46 => self.dma.register,
             0xFF40..=0xFF4B => self.ppu.read(addr),
             0xFF80..=0xFFFE => self.hram[usize::from(addr - 0xFF80)],
@@ -263,7 +264,7 @@ impl Bus {
             }
             0xFF04..=0xFF07 => self.timer.write(addr, value),
             0xFF0F => self.interrupt_flag = value & 0x1F,
-            0xFF10..=0xFF3F => self.sound[usize::from(addr - 0xFF10)] = value,
+            0xFF10..=0xFF3F => self.apu.write_register(addr, value),
             0xFF46 => {
                 self.dma.register = value;
                 self.dma.requested = Some(value);
@@ -292,7 +293,7 @@ impl Bus {
         self.joypad.save_state(w);
         w.slice(&self.wram[..]);
         w.slice(&self.hram);
-        w.slice(&self.sound);
+        self.apu.save_state(w);
         w.u8(self.serial.data);
         w.u8(self.serial.control);
         w.u32(self.serial.remaining);
@@ -318,7 +319,7 @@ impl Bus {
         next.joypad.load_state(r)?;
         r.fill(&mut next.wram[..])?;
         r.fill(&mut next.hram)?;
-        r.fill(&mut next.sound)?;
+        next.apu.load_state(r)?;
         next.serial.data = r.u8()?;
         next.serial.control = r.u8()? & 0x81;
         next.serial.remaining = r.u32()?;
