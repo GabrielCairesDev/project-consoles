@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { type ImageInfo, presetOf, sameChoices } from "./image";
 
 const SMS: ImageInfo = {
+  aspects: ["square"],
+  fits: ["integer"],
   palettes: ["core"],
   scalers: ["nearest", "epx"],
   original: { scaler: "nearest" },

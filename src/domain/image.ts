@@ -9,10 +9,18 @@ export type Scaler = "nearest" | "epx" | "mmpx" | "bilinear" | "sharp-bilinear";
 /** Cores da tela; espelha `player::image::Palette::id`. */
 export type Palette = "core" | "dmg" | "pocket";
 
+/** Proporção na tela; espelha `player::image::AspectRatio::id`. */
+export type AspectRatio = "square" | "tv";
+
+/** Encaixe na janela; espelha `player::image::Fit::id`. */
+export type Fit = "integer" | "fill";
+
 /** Escolhas de imagem, uma por técnica; espelha `settings::ImageChoices`. */
 export interface ImageChoices {
   palette?: Palette;
   scaler?: Scaler;
+  aspect?: AspectRatio;
+  fit?: Fit;
 }
 
 /** O que o console oferece em imagem; espelha `commands::ImageInfo`. */
@@ -21,7 +29,11 @@ export interface ImageInfo {
   palettes: Palette[];
   /** Ampliações do console, na ordem de exibição. */
   scalers: Scaler[];
-  /** Preset Original: pixel a pixel. */
+  /** Proporções do console. */
+  aspects: AspectRatio[];
+  /** Encaixes na janela. */
+  fits: Fit[];
+  /** Preset Original: pixel a pixel, na apresentação de sempre do console. */
   original: ImageChoices;
   /** Preset Recomendado do console (o padrão). */
   recommended: ImageChoices;
@@ -30,7 +42,7 @@ export interface ImageInfo {
 export type ImagePreset = "original" | "recommended" | "custom";
 
 /** Técnicas de imagem, na ordem do pipeline; cresce com o catálogo. */
-const TECHNIQUES = ["palette", "scaler"] as const satisfies readonly (keyof ImageChoices)[];
+const TECHNIQUES = ["palette", "scaler", "aspect", "fit"] as const satisfies readonly (keyof ImageChoices)[];
 
 export function sameChoices(a: ImageChoices, b: ImageChoices): boolean {
   return TECHNIQUES.every((technique) => a[technique] === b[technique]);

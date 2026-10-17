@@ -35,6 +35,10 @@ pub const SCALER_FLAG: &str = "--scaler";
 /// Argumento com a paleta ([`player::image::Palette::id`]); sem ele, vale a
 /// recomendada do console.
 pub const PALETTE_FLAG: &str = "--palette";
+/// Argumento com a proporção ([`player::image::AspectRatio::id`]).
+pub const ASPECT_FLAG: &str = "--aspect";
+/// Argumento com o encaixe na janela ([`player::image::Fit::id`]).
+pub const FIT_FLAG: &str = "--fit";
 
 /// Núcleo que roda jogos deste console, se houver.
 pub fn system_for(console_id: &str) -> Option<System> {
@@ -128,7 +132,11 @@ fn play_command(exe: &Path, rom: &Path, options: &LaunchOptions) -> Command {
         .arg(SCALER_FLAG)
         .arg(options.image.scaler.id())
         .arg(PALETTE_FLAG)
-        .arg(options.image.palette.id());
+        .arg(options.image.palette.id())
+        .arg(ASPECT_FLAG)
+        .arg(options.image.aspect.id())
+        .arg(FIT_FLAG)
+        .arg(options.image.fit.id());
     if let Some(state) = &options.state_path {
         command.arg(STATE_FLAG).arg(state);
     }
@@ -312,7 +320,11 @@ pub(crate) mod tests {
                 SCALER_FLAG,
                 "epx",
                 PALETTE_FLAG,
-                "core"
+                "core",
+                ASPECT_FLAG,
+                "square",
+                FIT_FLAG,
+                "integer"
             ]
         );
         let with_state = LaunchOptions {
@@ -333,6 +345,10 @@ pub(crate) mod tests {
                 "epx",
                 PALETTE_FLAG,
                 "core",
+                ASPECT_FLAG,
+                "square",
+                FIT_FLAG,
+                "integer",
                 STATE_FLAG,
                 "/dados/sonic.state",
                 BATTERY_FLAG,
@@ -352,12 +368,21 @@ pub(crate) mod tests {
 
         // A ampliação vai sempre explícita, logo depois das teclas.
         let plain = LaunchOptions {
-            image: ImageSettings::ORIGINAL,
+            image: ImageSettings::original(System::MasterSystem),
             ..options()
         };
         assert_eq!(
-            args(&plain)[6..10],
-            [SCALER_FLAG, "nearest", PALETTE_FLAG, "core"]
+            args(&plain)[6..14],
+            [
+                SCALER_FLAG,
+                "nearest",
+                PALETTE_FLAG,
+                "core",
+                ASPECT_FLAG,
+                "square",
+                FIT_FLAG,
+                "integer"
+            ]
         );
     }
 

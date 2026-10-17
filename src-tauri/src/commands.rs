@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use player::controls::{Bindings, SUPPORTED_KEYS, System};
-use player::image::{ImageSettings, Palette, Scaler};
+use player::image::{AspectRatio, Fit, ImageSettings, Palette, Scaler};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
@@ -98,6 +98,10 @@ pub struct ImageInfo {
     palettes: Vec<&'static str>,
     /// Ampliações do console ([`Scaler::id`]), na ordem de exibição.
     scalers: Vec<&'static str>,
+    /// Proporções do console ([`AspectRatio::id`]).
+    aspects: Vec<&'static str>,
+    /// Encaixes na janela ([`Fit::id`]).
+    fits: Vec<&'static str>,
     /// Presets, para a interface reconhecer o atual.
     original: ImageChoices,
     recommended: ImageChoices,
@@ -108,7 +112,12 @@ impl ImageInfo {
         Self {
             palettes: Palette::available(system).iter().map(|p| p.id()).collect(),
             scalers: Scaler::available(system).iter().map(|s| s.id()).collect(),
-            original: ImageSettings::ORIGINAL.into(),
+            aspects: AspectRatio::available(system)
+                .iter()
+                .map(|a| a.id())
+                .collect(),
+            fits: Fit::available(system).iter().map(|f| f.id()).collect(),
+            original: ImageSettings::original(system).into(),
             recommended: ImageSettings::recommended(system).into(),
         }
     }
@@ -795,7 +804,7 @@ mod tests {
             state_path: None,
             battery_path: None,
             bios_path: None,
-            image: ImageSettings::ORIGINAL,
+            image: ImageSettings::original(System::GameBoy),
         };
         state
             .runner
@@ -857,6 +866,9 @@ mod tests {
         let ps1_image = ps1.image.as_ref().expect("imagem do PS1");
         assert_eq!(ps1_image.scalers, ["nearest", "bilinear", "sharp-bilinear"]);
         assert_eq!(ps1_image.palettes, ["core"]);
+        assert_eq!(ps1_image.aspects, ["tv"]);
+        assert_eq!(ps1_image.fits, ["integer", "fill"]);
+        assert_eq!(ps1_image.original.fit.as_deref(), Some("fill"));
         assert_eq!(ps1_image.recommended.scaler.as_deref(), Some("bilinear"));
         assert_eq!(ps1_image.original.scaler.as_deref(), Some("nearest"));
         let sms = find("master-system");
@@ -868,6 +880,9 @@ mod tests {
         );
         let gb_image = find("game-boy").image.as_ref().expect("imagem do Game Boy");
         assert_eq!(gb_image.palettes, ["core", "dmg", "pocket"]);
+        assert_eq!(gb_image.aspects, ["square"]);
+        assert_eq!(sms_image.aspects, ["square", "tv"]);
+        assert_eq!(sms_image.recommended.aspect.as_deref(), Some("square"));
         assert_eq!(gb_image.recommended.palette.as_deref(), Some("dmg"));
         assert_eq!(sms_image.recommended.scaler.as_deref(), Some("epx"));
         let ps2 = find("playstation-2");

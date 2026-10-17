@@ -110,23 +110,101 @@ impl Palette {
     }
 }
 
+/// Proporção da imagem na tela (etapa de ajuste).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AspectRatio {
+    /// Cada pixel do console vira um quadrado.
+    Square,
+    /// A proporção da TV para a qual o console foi feito (4:3); os pixels
+    /// ficam levemente esticados, como na época.
+    Tv,
+}
+
+impl AspectRatio {
+    pub const ALL: [Self; 2] = [Self::Square, Self::Tv];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Square => "square",
+            Self::Tv => "tv",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|aspect| aspect.id() == id)
+    }
+
+    /// O Game Boy tem tela própria de pixels quadrados; o PlayStation muda
+    /// a largura em pixels conforme o modo de vídeo, então só a proporção da
+    /// TV faz sentido nele.
+    pub fn available(system: System) -> &'static [Self] {
+        match system {
+            System::MasterSystem | System::Genesis => &Self::ALL,
+            System::GameBoy => &[Self::Square],
+            System::PlayStation => &[Self::Tv],
+        }
+    }
+}
+
+/// Como a imagem ocupa a janela (etapa de ajuste).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fit {
+    /// Escala inteira: todos os pixels do mesmo tamanho, com barras.
+    Integer,
+    /// O maior tamanho que cabe na janela, mantendo a proporção.
+    Fill,
+}
+
+impl Fit {
+    pub const ALL: [Self; 2] = [Self::Integer, Self::Fill];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Integer => "integer",
+            Self::Fill => "fill",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|fit| fit.id() == id)
+    }
+
+    pub fn available(_system: System) -> &'static [Self] {
+        &Self::ALL
+    }
+}
+
 /// Configuração de imagem de um console: uma escolha por técnica.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageSettings {
     pub palette: Palette,
     pub scaler: Scaler,
+    pub aspect: AspectRatio,
+    pub fit: Fit,
 }
 
 impl ImageSettings {
-    /// Preset Original: todas as etapas desligadas, pixel a pixel.
-    pub const ORIGINAL: Self = Self {
-        palette: Palette::Core,
-        scaler: Scaler::Nearest,
-    };
+    /// Preset Original: etapas de cor e escala desligadas (pixel a pixel) e
+    /// a apresentação de sempre do console: pixels quadrados em escala
+    /// inteira nos 2D, tela 4:3 preenchida no PlayStation.
+    pub fn original(system: System) -> Self {
+        let (aspect, fit) = match system {
+            System::MasterSystem | System::Genesis | System::GameBoy => {
+                (AspectRatio::Square, Fit::Integer)
+            }
+            System::PlayStation => (AspectRatio::Tv, Fit::Fill),
+        };
+        Self {
+            palette: Palette::Core,
+            scaler: Scaler::Nearest,
+            aspect,
+            fit,
+        }
+    }
 
     /// Preset Recomendado do console (o padrão), escolhido pelo hardware
     /// original: contornos de pixel art nos 2D, suavização no 3D e, no
-    /// Game Boy, o verde da tela original.
+    /// Game Boy, o verde da tela original. A apresentação é a do Original.
     pub fn recommended(system: System) -> Self {
         let scaler = match system {
             System::MasterSystem | System::Genesis | System::GameBoy => Scaler::Epx,
@@ -136,24 +214,31 @@ impl ImageSettings {
             System::GameBoy => Palette::Dmg,
             System::MasterSystem | System::Genesis | System::PlayStation => Palette::Core,
         };
-        Self { palette, scaler }
+        Self {
+            palette,
+            scaler,
+            ..Self::original(system)
+        }
     }
 
     /// Confere se cada escolha existe no console.
     pub fn check(self, system: System) -> Result<Self, ImageError> {
+        let error = |option, value| ImageError {
+            option,
+            value,
+            system,
+        };
         if !Palette::available(system).contains(&self.palette) {
-            return Err(ImageError {
-                option: "paleta",
-                value: self.palette.id(),
-                system,
-            });
+            return Err(error("paleta", self.palette.id()));
         }
         if !Scaler::available(system).contains(&self.scaler) {
-            return Err(ImageError {
-                option: "ampliação",
-                value: self.scaler.id(),
-                system,
-            });
+            return Err(error("ampliação", self.scaler.id()));
+        }
+        if !AspectRatio::available(system).contains(&self.aspect) {
+            return Err(error("proporção", self.aspect.id()));
+        }
+        if !Fit::available(system).contains(&self.fit) {
+            return Err(error("encaixe", self.fit.id()));
         }
         Ok(self)
     }
@@ -209,12 +294,10 @@ mod tests {
                 "{system:?}"
             );
             let recommended = ImageSettings::recommended(system);
-            assert_ne!(recommended, ImageSettings::ORIGINAL, "{system:?}");
+            let original = ImageSettings::original(system);
+            assert_ne!(recommended, original, "{system:?}");
             assert_eq!(recommended.check(system), Ok(recommended));
-            assert_eq!(
-                ImageSettings::ORIGINAL.check(system),
-                Ok(ImageSettings::ORIGINAL)
-            );
+            assert_eq!(original.check(system), Ok(original));
         }
     }
 
@@ -230,7 +313,7 @@ mod tests {
         );
         let bilinear_on_2d = ImageSettings {
             scaler: Scaler::Bilinear,
-            ..ImageSettings::ORIGINAL
+            ..ImageSettings::original(System::MasterSystem)
         };
         let error = bilinear_on_2d
             .check(System::MasterSystem)
@@ -240,15 +323,52 @@ mod tests {
         for pixel_art in [Scaler::Epx, Scaler::Mmpx] {
             let on_3d = ImageSettings {
                 scaler: pixel_art,
-                ..ImageSettings::ORIGINAL
+                ..ImageSettings::original(System::PlayStation)
             };
             assert!(on_3d.check(System::PlayStation).is_err(), "{pixel_art:?}");
             let on_2d = ImageSettings {
                 scaler: pixel_art,
-                ..ImageSettings::ORIGINAL
+                ..ImageSettings::original(System::Genesis)
             };
             assert!(on_2d.check(System::Genesis).is_ok(), "{pixel_art:?}");
         }
+    }
+
+    #[test]
+    fn presentation_follows_each_screen() {
+        for id in ["square", "tv"] {
+            let aspect = AspectRatio::from_id(id).expect("proporção");
+            assert_eq!(aspect.id(), id);
+        }
+        for id in ["integer", "fill"] {
+            assert_eq!(Fit::from_id(id).map(Fit::id), Some(id));
+        }
+        assert_eq!(AspectRatio::from_id("16:9"), None);
+        // O de sempre: pixels quadrados inteiros nos 2D, 4:3 cheio no PS1.
+        let sms = ImageSettings::original(System::MasterSystem);
+        assert_eq!((sms.aspect, sms.fit), (AspectRatio::Square, Fit::Integer));
+        let ps1 = ImageSettings::original(System::PlayStation);
+        assert_eq!((ps1.aspect, ps1.fit), (AspectRatio::Tv, Fit::Fill));
+        // O Game Boy não tem TV; o PS1 não tem pixels quadrados.
+        let gb_tv = ImageSettings {
+            aspect: AspectRatio::Tv,
+            ..ImageSettings::original(System::GameBoy)
+        };
+        assert_eq!(
+            gb_tv.check(System::GameBoy).expect_err("sem TV").option,
+            "proporção"
+        );
+        let ps1_square = ImageSettings {
+            aspect: AspectRatio::Square,
+            ..ps1
+        };
+        assert!(ps1_square.check(System::PlayStation).is_err());
+        let sms_tv_fill = ImageSettings {
+            aspect: AspectRatio::Tv,
+            fit: Fit::Fill,
+            ..sms
+        };
+        assert!(sms_tv_fill.check(System::MasterSystem).is_ok());
     }
 
     #[test]

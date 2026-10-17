@@ -3,11 +3,12 @@
 //! Sem proporção definida a escala é inteira (pixels nítidos e iguais);
 //! com proporção, o quadro ocupa o maior retângulo dela que cabe. Antes de
 //! ampliar, a etapa de cor aplica a [`Palette`](crate::image::Palette); a ampliação segue o
-//! [`Scaler`] escolhido. [`ImageSettings::ORIGINAL`] é a imagem original,
-//! pixel a pixel.
+//! [`Scaler`] escolhido, e a etapa de ajuste decide proporção
+//! ([`AspectRatio`]) e encaixe ([`Fit`]). [`ImageSettings::original`] é a
+//! imagem original, pixel a pixel.
 
 use crate::enhance::{self, Tap};
-use crate::image::{ImageSettings, Scaler};
+use crate::image::{AspectRatio, Fit, ImageSettings, Scaler};
 use crate::mmpx;
 
 /// Tons que o núcleo do Game Boy desenha; a [`Palette`](crate::image::Palette) os substitui.
@@ -22,20 +23,27 @@ pub struct Layout {
     pub height: usize,
 }
 
-/// Onde o quadro é desenhado. Escala inteira: a maior que cabe (no mínimo
-/// 1, cortando se a janela for menor que o quadro). Com `aspect`: o maior
-/// retângulo nessa proporção dentro da janela.
+/// Onde o quadro é desenhado. A proporção é `aspect` ou, sem ela, a do
+/// próprio quadro (pixels quadrados). [`Fit::Integer`]: altura múltipla
+/// inteira da do quadro, a maior que cabe (no mínimo 1, cortando se a
+/// janela for menor); [`Fit::Fill`]: o maior retângulo na proporção.
 pub fn layout(
     window: (usize, usize),
     frame: (usize, usize),
     aspect: Option<(usize, usize)>,
+    fit: Fit,
 ) -> Layout {
-    let (width, height) = match aspect {
-        None => {
-            let scale = (window.0 / frame.0).min(window.1 / frame.1).max(1);
-            (frame.0 * scale, frame.1 * scale)
+    let (aw, ah) = aspect.unwrap_or(frame);
+    let (width, height) = match fit {
+        Fit::Integer => {
+            let width_for = |k: usize| frame.1 * k * aw / ah;
+            let mut k = (window.1 / frame.1).max(1);
+            while k > 1 && width_for(k) > window.0 {
+                k -= 1;
+            }
+            (width_for(k), frame.1 * k)
         }
-        Some((aw, ah)) => {
+        Fit::Fill => {
             if window.0 * ah <= window.1 * aw {
                 (window.0, window.0 * ah / aw)
             } else {
@@ -123,6 +131,8 @@ fn pixel_art_factor(k: usize) -> usize {
 #[derive(Debug)]
 pub struct Renderer {
     scaler: Scaler,
+    aspect: AspectRatio,
+    fit: Fit,
     /// Tons que substituem os do núcleo, se a paleta não for a dele.
     shades: Option<[u32; 4]>,
     colored: Vec<u32>,
@@ -136,6 +146,8 @@ impl Renderer {
     pub fn new(image: ImageSettings) -> Self {
         Self {
             scaler: image.scaler,
+            aspect: image.aspect,
+            fit: image.fit,
             shades: image.palette.shades(),
             colored: Vec::new(),
             scaled: Vec::new(),
@@ -145,6 +157,9 @@ impl Renderer {
         }
     }
 
+    /// `tv_aspect` é a proporção da TV do console (se houver), usada quando
+    /// o usuário escolhe [`AspectRatio::Tv`].
+    ///
     /// Copia `src` (`frame.0 × frame.1`, linhas de `stride` pixels)
     /// ampliado para `dst` (`window.0` de largura), com a ampliação
     /// escolhida. O resto de `dst` fica preto.
@@ -153,12 +168,20 @@ impl Renderer {
         src: &[u32],
         stride: usize,
         frame: (usize, usize),
-        aspect: Option<(usize, usize)>,
+        tv_aspect: Option<(usize, usize)>,
         dst: &mut [u32],
         window: (usize, usize),
     ) {
-        let rect = layout(window, frame, aspect);
-        if frame.0 == 0 || frame.1 == 0 || rect.width == 0 || rect.height == 0 {
+        if frame.0 == 0 || frame.1 == 0 {
+            dst.fill(0);
+            return;
+        }
+        let aspect = match self.aspect {
+            AspectRatio::Square => None,
+            AspectRatio::Tv => tv_aspect,
+        };
+        let rect = layout(window, frame, aspect, self.fit);
+        if rect.width == 0 || rect.height == 0 {
             dst.fill(0);
             return;
         }
@@ -288,6 +311,22 @@ impl Renderer {
 mod tests {
     use super::*;
 
+    /// Configuração de teste: com `aspect`, preenche nessa proporção; sem,
+    /// pixels quadrados em escala inteira (o comportamento de cada console
+    /// antes da etapa de ajuste).
+    fn legacy(scaler: Scaler, aspect: Option<(usize, usize)>) -> ImageSettings {
+        ImageSettings {
+            scaler,
+            aspect: AspectRatio::Tv,
+            fit: if aspect.is_some() {
+                Fit::Fill
+            } else {
+                Fit::Integer
+            },
+            ..ImageSettings::original(crate::controls::System::MasterSystem)
+        }
+    }
+
     /// Imagem original, sem melhoria.
     fn blit(
         src: &[u32],
@@ -297,7 +336,8 @@ mod tests {
         dst: &mut [u32],
         window: (usize, usize),
     ) {
-        Renderer::new(ImageSettings::ORIGINAL).draw(src, stride, frame, aspect, dst, window);
+        Renderer::new(legacy(Scaler::Nearest, aspect))
+            .draw(src, stride, frame, aspect, dst, window);
     }
 
     fn draw(
@@ -309,11 +349,7 @@ mod tests {
         window: (usize, usize),
     ) -> Vec<u32> {
         let mut dst = vec![9; window.0 * window.1];
-        Renderer::new(ImageSettings {
-            scaler,
-            ..ImageSettings::ORIGINAL
-        })
-        .draw(src, stride, frame, aspect, &mut dst, window);
+        Renderer::new(legacy(scaler, aspect)).draw(src, stride, frame, aspect, &mut dst, window);
         dst
     }
 
@@ -336,7 +372,7 @@ mod tests {
         let shades = Palette::Dmg.shades().expect("tons do DMG");
         let green = draw_with(ImageSettings {
             palette: Palette::Dmg,
-            ..ImageSettings::ORIGINAL
+            ..legacy(Scaler::Nearest, None)
         });
         let expected_row: Vec<u32> = [shades[0], shades[1], shades[2], shades[3], 0x123456]
             .iter()
@@ -347,7 +383,7 @@ mod tests {
 
         let mut nearest_only = vec![9; 20];
         blit(&src, 5, (5, 1), None, &mut nearest_only, (10, 2));
-        assert_eq!(draw_with(ImageSettings::ORIGINAL), nearest_only);
+        assert_eq!(draw_with(legacy(Scaler::Nearest, None)), nearest_only);
     }
 
     #[test]
@@ -366,6 +402,49 @@ mod tests {
     }
 
     #[test]
+    fn tv_aspect_with_integer_fit_keeps_whole_lines() {
+        // SMS 256×192 em 4:3 numa janela 1920×1080: altura 5 × 192 = 960,
+        // largura 960 × 4/3 = 1280.
+        let rect = layout((1920, 1080), (256, 192), Some((4, 3)), Fit::Integer);
+        assert_eq!((rect.width, rect.height), (1280, 960));
+        assert_eq!((rect.x, rect.y), (320, 60));
+        // Janela estreita: a largura manda e a escala desce até caber.
+        let narrow = layout((700, 1080), (256, 192), Some((4, 3)), Fit::Integer);
+        assert_eq!((narrow.width, narrow.height), (512, 384));
+        // Pixels quadrados preenchendo: maior retângulo na proporção do quadro.
+        let fill = layout((1000, 1000), (160, 144), None, Fit::Fill);
+        assert_eq!((fill.width, fill.height), (1000, 900));
+    }
+
+    #[test]
+    fn renderer_applies_the_chosen_aspect_and_fit() {
+        let src = [0x112233; 4];
+        let render = |aspect, fit| {
+            let mut dst = vec![9; 12 * 6];
+            Renderer::new(ImageSettings {
+                aspect,
+                fit,
+                ..ImageSettings::original(crate::controls::System::MasterSystem)
+            })
+            .draw(&src, 2, (2, 2), Some((2, 1)), &mut dst, (12, 6));
+            dst.iter().filter(|&&px| px == 0x112233).count()
+        };
+        // Quadrados inteiros: 2×2 → 6×6 (escala 3). TV 2:1 inteira: 12×6.
+        assert_eq!(render(AspectRatio::Square, Fit::Integer), 36);
+        assert_eq!(render(AspectRatio::Tv, Fit::Integer), 72);
+        assert_eq!(render(AspectRatio::Square, Fit::Fill), 36);
+        assert_eq!(render(AspectRatio::Tv, Fit::Fill), 72);
+        // Sem proporção de TV no console, "TV" vale pixels quadrados.
+        let mut dst = vec![9; 12 * 6];
+        Renderer::new(ImageSettings {
+            aspect: AspectRatio::Tv,
+            ..ImageSettings::original(crate::controls::System::MasterSystem)
+        })
+        .draw(&src, 2, (2, 2), None, &mut dst, (12, 6));
+        assert_eq!(dst.iter().filter(|&&px| px == 0x112233).count(), 36);
+    }
+
+    #[test]
     fn every_pixel_is_written_whatever_was_in_the_window() {
         // Pintar só as barras exige que os filtros escrevam todo o retângulo:
         // o resultado sobre lixo tem que ser igual ao resultado sobre preto.
@@ -374,18 +453,25 @@ mod tests {
             .collect();
         let windows = [(7, 5), (20, 11), (31, 40), (64, 23), (5, 3), (3, 2)];
         let aspects = [None, Some((4, 3)), Some((1, 3))];
-        for scaler in Scaler::ALL {
-            let mut renderer = Renderer::new(ImageSettings {
-                scaler,
-                ..ImageSettings::ORIGINAL
-            });
+        let choices = Scaler::ALL.into_iter().flat_map(|scaler| {
+            AspectRatio::ALL.into_iter().flat_map(move |aspect| {
+                Fit::ALL.into_iter().map(move |fit| ImageSettings {
+                    scaler,
+                    aspect,
+                    fit,
+                    ..ImageSettings::original(crate::controls::System::MasterSystem)
+                })
+            })
+        });
+        for image in choices {
+            let mut renderer = Renderer::new(image);
             for window in windows {
                 for aspect in aspects {
                     let mut black = vec![0; window.0 * window.1];
                     renderer.draw(&src, 7, (7, 5), aspect, &mut black, window);
                     let mut garbage = vec![0xAB_CDEF; window.0 * window.1];
                     renderer.draw(&src, 7, (7, 5), aspect, &mut garbage, window);
-                    assert_eq!(garbage, black, "{scaler:?} {window:?} {aspect:?}");
+                    assert_eq!(garbage, black, "{image:?} {window:?} {aspect:?}");
                 }
             }
         }
@@ -471,7 +557,7 @@ mod tests {
     #[test]
     fn picks_largest_integer_scale_and_centers() {
         assert_eq!(
-            layout((800, 600), (256, 192), None),
+            layout((800, 600), (256, 192), None, Fit::Integer),
             Layout {
                 x: 16,
                 y: 12,
@@ -480,7 +566,7 @@ mod tests {
             }
         );
         assert_eq!(
-            layout((256, 192), (256, 192), None),
+            layout((256, 192), (256, 192), None, Fit::Integer),
             Layout {
                 x: 0,
                 y: 0,
@@ -489,7 +575,7 @@ mod tests {
             }
         );
         assert_eq!(
-            layout((100, 100), (256, 192), None),
+            layout((100, 100), (256, 192), None, Fit::Integer),
             Layout {
                 x: 0,
                 y: 0,
@@ -540,15 +626,24 @@ mod tests {
             width: 960,
             height: 720,
         };
-        assert_eq!(layout((960, 720), (512, 240), Some((4, 3))), full);
-        assert_eq!(layout((960, 720), (320, 240), Some((4, 3))), full);
-        assert_eq!(layout((960, 720), (640, 480), Some((4, 3))), full);
+        assert_eq!(
+            layout((960, 720), (512, 240), Some((4, 3)), Fit::Fill),
+            full
+        );
+        assert_eq!(
+            layout((960, 720), (320, 240), Some((4, 3)), Fit::Fill),
+            full
+        );
+        assert_eq!(
+            layout((960, 720), (640, 480), Some((4, 3)), Fit::Fill),
+            full
+        );
     }
 
     #[test]
     fn aspect_letterboxes_wide_and_tall_windows() {
         assert_eq!(
-            layout((1000, 600), (320, 240), Some((4, 3))),
+            layout((1000, 600), (320, 240), Some((4, 3)), Fit::Fill),
             Layout {
                 x: 100,
                 y: 0,
@@ -557,7 +652,7 @@ mod tests {
             }
         );
         assert_eq!(
-            layout((400, 600), (320, 240), Some((4, 3))),
+            layout((400, 600), (320, 240), Some((4, 3)), Fit::Fill),
             Layout {
                 x: 0,
                 y: 150,
@@ -613,7 +708,7 @@ mod tests {
                 "SMS original",
                 (256, 192),
                 frame(256, 192, &rgb),
-                ImageSettings::ORIGINAL,
+                ImageSettings::original(crate::controls::System::MasterSystem),
                 None,
             ),
             (
@@ -622,7 +717,7 @@ mod tests {
                 frame(256, 192, &rgb),
                 ImageSettings {
                     scaler: Scaler::Mmpx,
-                    ..ImageSettings::ORIGINAL
+                    ..ImageSettings::original(crate::controls::System::MasterSystem)
                 },
                 None,
             ),
@@ -632,7 +727,7 @@ mod tests {
                 frame(256, 192, &rgb),
                 ImageSettings {
                     scaler: Scaler::Epx,
-                    ..ImageSettings::ORIGINAL
+                    ..ImageSettings::original(crate::controls::System::MasterSystem)
                 },
                 None,
             ),
@@ -642,7 +737,7 @@ mod tests {
                 frame(256, 192, &rgb),
                 ImageSettings {
                     scaler: Scaler::SharpBilinear,
-                    ..ImageSettings::ORIGINAL
+                    ..ImageSettings::original(crate::controls::System::MasterSystem)
                 },
                 Some((4, 3)),
             ),
@@ -653,6 +748,7 @@ mod tests {
                 ImageSettings {
                     palette: Palette::Dmg,
                     scaler: Scaler::Epx,
+                    ..ImageSettings::original(crate::controls::System::GameBoy)
                 },
                 None,
             ),
@@ -663,6 +759,7 @@ mod tests {
                 ImageSettings {
                     palette: Palette::Dmg,
                     scaler: Scaler::SharpBilinear,
+                    ..ImageSettings::original(crate::controls::System::GameBoy)
                 },
                 Some((10, 9)),
             ),
@@ -672,7 +769,7 @@ mod tests {
                 frame(640, 480, &rgb),
                 ImageSettings {
                     scaler: Scaler::Bilinear,
-                    ..ImageSettings::ORIGINAL
+                    ..ImageSettings::original(crate::controls::System::MasterSystem)
                 },
                 Some((4, 3)),
             ),
@@ -682,14 +779,17 @@ mod tests {
                 frame(320, 240, &rgb),
                 ImageSettings {
                     scaler: Scaler::SharpBilinear,
-                    ..ImageSettings::ORIGINAL
+                    ..ImageSettings::original(crate::controls::System::MasterSystem)
                 },
                 Some((4, 3)),
             ),
         ];
         let mut dst = vec![0; WINDOW.0 * WINDOW.1];
         for (name, size, src, image, aspect) in cases {
-            let mut renderer = Renderer::new(image);
+            let mut renderer = Renderer::new(ImageSettings {
+                palette: image.palette,
+                ..legacy(image.scaler, aspect)
+            });
             renderer.draw(&src, size.0, size, aspect, &mut dst, WINDOW);
             let start = Instant::now();
             for _ in 0..FRAMES {

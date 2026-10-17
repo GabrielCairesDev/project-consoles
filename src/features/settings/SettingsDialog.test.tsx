@@ -30,7 +30,7 @@ const SMS: Console = {
   playable: true,
   needsBios: false,
   resumable: true,
-  image: { palettes: ["core"], scalers: ["nearest", "epx"], original: { scaler: "nearest" }, recommended: { scaler: "epx" } },
+  image: { aspects: ["square"], fits: ["integer"], palettes: ["core"], scalers: ["nearest", "epx"], original: { scaler: "nearest" }, recommended: { scaler: "epx" } },
 };
 
 const PS1: Console = {
@@ -41,7 +41,7 @@ const PS1: Console = {
   releaseYear: 1994,
   needsBios: true,
   resumable: false,
-  image: { palettes: ["core"], scalers: ["nearest", "bilinear"], original: { scaler: "nearest" }, recommended: { scaler: "bilinear" } },
+  image: { aspects: ["square"], fits: ["integer"], palettes: ["core"], scalers: ["nearest", "bilinear"], original: { scaler: "nearest" }, recommended: { scaler: "bilinear" } },
 };
 
 function Harness({
@@ -274,6 +274,8 @@ describe("SettingsDialog", () => {
       name: "Game Boy",
       kind: "handheld",
       image: {
+        aspects: ["square"],
+        fits: ["integer", "fill"],
         palettes: ["core", "dmg", "pocket"],
         scalers: ["nearest", "epx", "mmpx", "sharp-bilinear"],
         original: { palette: "core", scaler: "nearest" },
@@ -305,6 +307,47 @@ describe("SettingsDialog", () => {
     render(<Harness />);
     await screen.findByRole("radiogroup", { name: "Ampliação" });
     expect(screen.queryByRole("radiogroup", { name: "Paleta" })).not.toBeInTheDocument();
+  });
+
+  it("proporção e encaixe aparecem só com mais de uma opção e salvam na hora", async () => {
+    const sms: Console = {
+      ...SMS,
+      image: {
+        ...SMS.image!,
+        aspects: ["square", "tv"],
+        fits: ["integer", "fill"],
+        original: { scaler: "nearest", aspect: "square", fit: "integer" },
+        recommended: { scaler: "epx", aspect: "square", fit: "integer" },
+      },
+    };
+    getMock.mockResolvedValue({
+      resume: true,
+      image: { scaler: "epx", aspect: "square", fit: "integer" },
+    });
+    render(<Harness console={sms} />);
+
+    const aspect = await screen.findByRole("radiogroup", { name: "Proporção" });
+    expect(within(aspect).getByRole("radio", { name: "Pixels quadrados" })).toBeChecked();
+    fireEvent.click(within(aspect).getByRole("radio", { name: "Tela de TV (4:3)" }));
+    expect(saveMock).toHaveBeenCalledWith("master-system", {
+      resume: true,
+      image: { scaler: "epx", aspect: "tv", fit: "integer" },
+    });
+    const fit = screen.getByRole("radiogroup", { name: "Encaixe na janela" });
+    await waitFor(() =>
+      expect(within(aspect).getByRole("radio", { name: "Tela de TV (4:3)" })).toBeChecked(),
+    );
+    fireEvent.click(within(fit).getByRole("radio", { name: "Preencher" }));
+    expect(saveMock).toHaveBeenLastCalledWith("master-system", {
+      resume: true,
+      image: { scaler: "epx", aspect: "tv", fit: "fill" },
+    });
+
+    cleanup();
+    vi.mocked(getBios).mockResolvedValue({ installed: true });
+    render(<Harness console={PS1} />);
+    await screen.findByRole("radiogroup", { name: "Ampliação" });
+    expect(screen.queryByRole("radiogroup", { name: "Proporção" })).not.toBeInTheDocument();
   });
 
   it("console sem opções de imagem não mostra a seção", async () => {

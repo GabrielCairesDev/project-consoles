@@ -3,6 +3,9 @@
   inset: 0;
   z-index: var(--z-dialog);
   display: grid;
+  /* Linha com a altura da tela: sem isso o max-height do painel não limita
+     nada e um conteúdo longo passa da tela sem rolar. */
+  grid-template-rows: minmax(0, 1fr);
   place-items: center;
   padding: var(--page-gutter);
   background: var(--color-backdrop);

@@ -83,7 +83,7 @@ Proporção (original, 4:3, pixels quadrados), escala inteira ou preencher, e co
 | Filtragem de textura | — | — | — | o |
 | Downsampling adaptativo | — | — | — | o |
 | Paleta | — | — | R (verde original) | — |
-| Correção de cor de LCD | — | — | o | — |
+| Correção de cor de LCD | — | — | — (tela monocromática; as paletas cobrem) | — |
 | Scale2x/3x | R | R | R | — |
 | MMPX | o | o | o | — |
 | xBRZ / ScaleFX | — (licença) | — (licença) | — (licença) | — |
@@ -93,6 +93,10 @@ Proporção (original, 4:3, pixels quadrados), escala inteira ou preencher, e co
 | Sinal NTSC | o | o | — | o |
 | Grade de LCD | — | — | o | — |
 | Frame blending | — | — | o | — |
+| Proporção: pixels quadrados | R | R | R | — |
+| Proporção: TV 4:3 | o | o | — | R |
+| Encaixe: escala inteira | R | R | R | o |
+| Encaixe: preencher | o | o | o | R |
 
 Ao implementar ou medir uma técnica, atualize esta matriz (custo e estado).
 
@@ -109,6 +113,7 @@ Benchmark: `cargo test --release -p player bench_ -- --ignored --nocapture` (`vi
 | Paleta + EPX | implementada | GB 160×144 | 0,79–0,81 |
 | Paleta + sharp-bilinear | implementada | GB 160×144, 10:9 | 0,49–0,50 |
 | Bilinear | implementada | PS1 640×480, 4:3 | 1,29–1,30 |
+| Proporção e encaixe | implementadas (só posicionam o quadro, custo desprezível) | — | — |
 | Resolução interna 2× | em outro branch (`claude/gifted-gates-6ae501`) | — | — |
 | Demais | não implementadas | — | — |
 
@@ -122,7 +127,7 @@ Histórico: antes de pintar só as barras, a janela inteira era limpa e reescrit
 
 ## 7. Testes obrigatórios
 - Saída de cada técnica em casos conhecidos (diagonal, área lisa, borda do quadro, quadro de 1 pixel).
-- Cada etapa desligada é identidade; o preset Original é idêntico ao quadro do núcleo.
+- Cada etapa desligada é identidade; o preset Original é idêntico ao quadro do núcleo, na apresentação de sempre do console (`ImageSettings::original(system)`).
 - Técnicas de escala 2D não inventam cores, exceto onde a técnica mistura por definição (bilinear, xBRZ, NTSC).
 - Etapa 1: o estado salvo em uma resolução carrega em outra, e o save do jogo não muda com ela.
 - Configurações: ida e volta, migração do booleano antigo, valor inválido tratado e preferência respeitada ao abrir o jogo.

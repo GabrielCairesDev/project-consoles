@@ -3,6 +3,8 @@ import { RotateCcw } from "lucide-react";
 import { Button } from "../../components/Button";
 import { type Choice, ChoiceGroup } from "../../components/ChoiceGroup";
 import {
+  type AspectRatio,
+  type Fit,
   type ImageChoices,
   type ImageInfo,
   type ImagePreset,
@@ -61,6 +63,31 @@ const PALETTE_CHOICE: Record<Palette, Omit<Choice<Palette>, "value">> = {
   },
 };
 
+/** Proporção da imagem, em linguagem simples. */
+const ASPECT_CHOICE: Record<AspectRatio, Omit<Choice<AspectRatio>, "value">> = {
+  square: {
+    label: "Pixels quadrados",
+    description: "Cada pixel do console vira um quadrado, sem esticar.",
+  },
+  tv: {
+    label: "Tela de TV (4:3)",
+    description:
+      "A proporção da TV da época: os pixels ficam um pouco mais largos, como o jogo foi pensado para ser visto.",
+  },
+};
+
+/** Como a imagem ocupa a janela. */
+const FIT_CHOICE: Record<Fit, Omit<Choice<Fit>, "value">> = {
+  integer: {
+    label: "Escala inteira",
+    description: "Todos os pixels do mesmo tamanho, com barras pretas em volta.",
+  },
+  fill: {
+    label: "Preencher",
+    description: "O maior tamanho que cabe na janela, mantendo a proporção.",
+  },
+};
+
 const PRESET_CHOICES: Choice<ImagePreset>[] = [
   { value: "original", label: "Original" },
   { value: "recommended", label: "Recomendado" },
@@ -114,6 +141,24 @@ export function ImageSection({ image, choices, disabled, onChange }: ImageSectio
           value={choices.scaler ?? null}
           disabled={disabled}
           onChange={(scaler) => onChange({ ...choices, scaler })}
+        />
+      )}
+      {image.aspects.length > 1 && (
+        <ChoiceGroup
+          label="Proporção"
+          choices={image.aspects.map((value) => ({ value, ...ASPECT_CHOICE[value] }))}
+          value={choices.aspect ?? null}
+          disabled={disabled}
+          onChange={(aspect) => onChange({ ...choices, aspect })}
+        />
+      )}
+      {image.fits.length > 1 && (
+        <ChoiceGroup
+          label="Encaixe na janela"
+          choices={image.fits.map((value) => ({ value, ...FIT_CHOICE[value] }))}
+          value={choices.fit ?? null}
+          disabled={disabled}
+          onChange={(fit) => onChange({ ...choices, fit })}
         />
       )}
       <div className={styles.actions}>

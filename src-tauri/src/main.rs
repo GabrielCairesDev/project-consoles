@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use player::controls::{Bindings, System};
-use player::image::{ImageSettings, Palette, Scaler};
+use player::image::{AspectRatio, Fit, ImageSettings, Palette, Scaler};
 use project_consoles_lib::runtime::{
-    BATTERY_FLAG, BIOS_FLAG, CONSOLE_FLAG, KEYS_FLAG, PALETTE_FLAG, PLAY_FLAG, SCALER_FLAG,
-    STATE_FLAG,
+    ASPECT_FLAG, BATTERY_FLAG, BIOS_FLAG, CONSOLE_FLAG, FIT_FLAG, KEYS_FLAG, PALETTE_FLAG,
+    PLAY_FLAG, SCALER_FLAG, STATE_FLAG,
 };
 
 /// O mesmo binário é o launcher e, com
@@ -70,6 +70,8 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
     let mut bios = None;
     let mut scaler = None;
     let mut palette = None;
+    let mut aspect = None;
+    let mut fit = None;
     while let Some(flag) = args.next() {
         let value = args
             .next()
@@ -93,6 +95,14 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
             let id = value.to_str().unwrap_or_default();
             palette =
                 Some(Palette::from_id(id).ok_or_else(|| format!("paleta desconhecida: {id}"))?);
+        } else if flag == ASPECT_FLAG {
+            let id = value.to_str().unwrap_or_default();
+            aspect = Some(
+                AspectRatio::from_id(id).ok_or_else(|| format!("proporção desconhecida: {id}"))?,
+            );
+        } else if flag == FIT_FLAG {
+            let id = value.to_str().unwrap_or_default();
+            fit = Some(Fit::from_id(id).ok_or_else(|| format!("encaixe desconhecido: {id}"))?);
         } else {
             return Err(format!(
                 "argumento desconhecido: {}",
@@ -115,6 +125,8 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
             ImageSettings {
                 palette: palette.unwrap_or(recommended.palette),
                 scaler: scaler.unwrap_or(recommended.scaler),
+                aspect: aspect.unwrap_or(recommended.aspect),
+                fit: fit.unwrap_or(recommended.fit),
             }
         },
     })
@@ -122,7 +134,7 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
 
 fn usage() -> ExitCode {
     eprintln!(
-        "uso: {PLAY_FLAG} <caminho da ROM> {CONSOLE_FLAG} <id> [{KEYS_FLAG} <ação=tecla,...>] [{STATE_FLAG} <arquivo>] [{BATTERY_FLAG} <arquivo>] [{BIOS_FLAG} <arquivo>] [{SCALER_FLAG} <id>] [{PALETTE_FLAG} <id>]"
+        "uso: {PLAY_FLAG} <caminho da ROM> {CONSOLE_FLAG} <id> [{KEYS_FLAG} <ação=tecla,...>] [{STATE_FLAG} <arquivo>] [{BATTERY_FLAG} <arquivo>] [{BIOS_FLAG} <arquivo>] [{SCALER_FLAG} <id>] [{PALETTE_FLAG} <id>] [{ASPECT_FLAG} <id>] [{FIT_FLAG} <id>]"
     );
     ExitCode::from(2)
 }
@@ -152,8 +164,19 @@ mod tests {
         ];
         assert_eq!(
             parse(&original).expect("válido").image,
-            ImageSettings::ORIGINAL
+            ImageSettings::original(System::GameBoy)
         );
+        let genesis_tv = [
+            CONSOLE_FLAG,
+            "mega-drive",
+            ASPECT_FLAG,
+            "tv",
+            FIT_FLAG,
+            "fill",
+        ];
+        let image = parse(&genesis_tv).expect("válido").image;
+        assert_eq!((image.aspect, image.fit), (AspectRatio::Tv, Fit::Fill));
+        assert!(parse(&[CONSOLE_FLAG, "mega-drive", FIT_FLAG, "esticar"]).is_err());
         assert!(parse(&[CONSOLE_FLAG, "game-boy", SCALER_FLAG, "talvez"]).is_err());
         let pocket = [CONSOLE_FLAG, "game-boy", PALETTE_FLAG, "pocket"];
         assert_eq!(

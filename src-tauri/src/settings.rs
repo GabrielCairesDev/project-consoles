@@ -6,7 +6,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use player::controls::{BindingError, Bindings, System};
-use player::image::{ImageSettings, Palette, Scaler};
+use player::image::{AspectRatio, Fit, ImageSettings, Palette, Scaler};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,12 +57,14 @@ fn resume_by_default() -> bool {
 }
 
 impl From<StoredConsoleSettings> for ConsoleSettings {
-    /// `enhance: false` vira o preset Original; `true` ou ausente, o
-    /// Recomendado. Com `image` gravado, `enhance` não vale mais.
+    /// `enhance: false` desliga cor e escala (o que a melhoria fazia);
+    /// `true` ou ausente vale o Recomendado. Proporção e encaixe ficam no
+    /// padrão do console, que era o único comportamento antes. Com `image`
+    /// gravado, `enhance` não vale mais.
     fn from(stored: StoredConsoleSettings) -> Self {
         let image = match (stored.image, stored.enhance) {
             (Some(image), _) => image,
-            (None, Some(false)) => ImageChoices::from(ImageSettings::ORIGINAL),
+            (None, Some(false)) => ImageChoices::filters_off(),
             (None, _) => ImageChoices::default(),
         };
         Self {
@@ -82,6 +84,10 @@ pub struct ImageChoices {
     pub palette: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scaler: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aspect: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fit: Option<String>,
 }
 
 impl From<ImageSettings> for ImageChoices {
@@ -89,6 +95,8 @@ impl From<ImageSettings> for ImageChoices {
         Self {
             palette: Some(image.palette.id().to_owned()),
             scaler: Some(image.scaler.id().to_owned()),
+            aspect: Some(image.aspect.id().to_owned()),
+            fit: Some(image.fit.id().to_owned()),
         }
     }
 }
@@ -111,6 +119,18 @@ const SCALER: Technique<Scaler> = Technique {
     name: "a ampliação",
     from_id: Scaler::from_id,
     available: Scaler::available,
+};
+
+const ASPECT: Technique<AspectRatio> = Technique {
+    name: "a proporção",
+    from_id: AspectRatio::from_id,
+    available: AspectRatio::available,
+};
+
+const FIT: Technique<Fit> = Technique {
+    name: "o encaixe",
+    from_id: Fit::from_id,
+    available: Fit::available,
 };
 
 impl<T: Copy + PartialEq> Technique<T> {
@@ -148,6 +168,16 @@ impl<T: Copy + PartialEq> Technique<T> {
 }
 
 impl ImageChoices {
+    /// Cor e escala desligadas, sem depender do console (o resto vale o
+    /// padrão dele).
+    pub fn filters_off() -> Self {
+        Self {
+            palette: Some(Palette::Core.id().to_owned()),
+            scaler: Some(Scaler::Nearest.id().to_owned()),
+            ..Self::default()
+        }
+    }
+
     /// Configuração com que o jogo roda. Uma escolha gravada que não existe
     /// no console (arquivo editado à mão ou de outra versão) vale o
     /// Recomendado, com aviso; as outras escolhas são mantidas.
@@ -156,6 +186,8 @@ impl ImageChoices {
         ImageSettings {
             palette: PALETTE.resolve(system, self.palette.as_deref(), recommended.palette),
             scaler: SCALER.resolve(system, self.scaler.as_deref(), recommended.scaler),
+            aspect: ASPECT.resolve(system, self.aspect.as_deref(), recommended.aspect),
+            fit: FIT.resolve(system, self.fit.as_deref(), recommended.fit),
         }
     }
 
@@ -163,7 +195,9 @@ impl ImageChoices {
     /// no console é recusado, sem gravar nada.
     pub fn check(&self, system: System) -> Result<(), String> {
         PALETTE.check(system, self.palette.as_deref())?;
-        SCALER.check(system, self.scaler.as_deref())
+        SCALER.check(system, self.scaler.as_deref())?;
+        ASPECT.check(system, self.aspect.as_deref())?;
+        FIT.check(system, self.fit.as_deref())
     }
 }
 
@@ -266,7 +300,7 @@ mod tests {
             "playstation",
             ConsoleSettings {
                 resume: true,
-                image: ImageChoices::from(ImageSettings::ORIGINAL),
+                image: ImageChoices::from(ImageSettings::original(System::PlayStation)),
             },
         );
         settings.save(&path).expect("save");
@@ -291,7 +325,7 @@ mod tests {
                 .console("playstation")
                 .image
                 .resolve(System::PlayStation),
-            ImageSettings::ORIGINAL
+            ImageSettings::original(System::PlayStation)
         );
     }
 
@@ -336,7 +370,7 @@ mod tests {
         for system in System::ALL {
             assert_eq!(
                 off.image.resolve(system),
-                ImageSettings::ORIGINAL,
+                ImageSettings::original(system),
                 "{system:?}"
             );
         }
@@ -403,6 +437,24 @@ mod tests {
         let error = green.check(System::Genesis).expect_err("sem paletas");
         assert_eq!(error, "A paleta \"dmg\" não existe para este console.");
         assert_eq!(ImageChoices::default().check(System::PlayStation), Ok(()));
+        let tv = ImageChoices {
+            aspect: Some("tv".to_owned()),
+            fit: Some("fill".to_owned()),
+            ..ImageChoices::default()
+        };
+        assert_eq!(tv.check(System::Genesis), Ok(()));
+        assert_eq!(
+            tv.check(System::GameBoy),
+            Err("A proporção \"tv\" não existe para este console.".to_owned())
+        );
+        let stretched = ImageChoices {
+            fit: Some("stretch".to_owned()),
+            ..ImageChoices::default()
+        };
+        assert_eq!(
+            stretched.check(System::Genesis),
+            Err("O encaixe \"stretch\" não existe para este console.".to_owned())
+        );
     }
 
     #[test]
