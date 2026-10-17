@@ -4,7 +4,7 @@ import { Button } from "../../components/Button";
 import { Dialog } from "../../components/Dialog";
 import { Switch } from "../../components/Switch";
 import type { Console } from "../../domain/console";
-import type { Scaler } from "../../domain/image";
+import { ImageSection } from "./ImageSection";
 import { type BiosControl, useBios } from "./useBios";
 import type { ConsoleSettingsControl } from "./useConsoleSettings";
 import styles from "./SettingsDialog.module.css";
@@ -16,26 +16,11 @@ interface SettingsDialogProps {
   onClose: () => void;
 }
 
-/**
- * O que a melhoria de imagem faz, pela ampliação recomendada do console.
- * Provisório até a tela com todas as opções de imagem.
- */
-const ENHANCEMENT_DESCRIPTION: Partial<Record<Scaler, string>> = {
-  epx:
-    "Amplia a pixel art com contornos arredondados, sem borrar nem mudar as cores. Desligada, mostra os pixels originais. Vale a partir do próximo jogo aberto.",
-  bilinear:
-    "Suaviza a imagem ampliada, reduzindo o serrilhado e o pontilhado dos gráficos 3D. Desligada, mostra os pixels originais. Vale a partir do próximo jogo aberto.",
-};
-
 /** Opções de jogo de um console. */
 export function SettingsDialog({ console, control, onClose }: SettingsDialogProps) {
   const { state, saving, saveError, update, retry } = control;
   const gameSectionId = useId();
-  const imageSectionId = useId();
   const bios = useBios(console.id, console.needsBios);
-  const image = console.image;
-  const recommendedScaler = image?.recommended.scaler;
-  const enhancementDescription = recommendedScaler && ENHANCEMENT_DESCRIPTION[recommendedScaler];
 
   return (
     <Dialog title={`Configurações · ${console.name}`} onClose={onClose}>
@@ -78,20 +63,13 @@ export function SettingsDialog({ console, control, onClose }: SettingsDialogProp
         </section>
       )}
 
-      {state.status === "ready" && image && enhancementDescription && (
-        <section className={styles.section} aria-labelledby={imageSectionId}>
-          <h3 id={imageSectionId} className={styles.sectionTitle}>
-            Imagem
-          </h3>
-          {/* Ligada = preset Recomendado; desligada = Original. */}
-          <Switch
-            label="Melhoria de imagem"
-            description={enhancementDescription}
-            checked={state.settings.image.scaler !== image.original.scaler}
-            disabled={saving}
-            onChange={(on) => update({ image: on ? image.recommended : image.original })}
-          />
-        </section>
+      {state.status === "ready" && console.image && (
+        <ImageSection
+          image={console.image}
+          choices={state.settings.image}
+          disabled={saving}
+          onChange={(image) => update({ image })}
+        />
       )}
 
       {console.needsBios && <BiosSection consoleName={console.name} control={bios} />}

@@ -1,0 +1,124 @@
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.group[data-disabled] {
+  opacity: 0.6;
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.label {
+  font-weight: var(--font-weight-semibold);
+}
+
+.description {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+.choice:hover:not(:disabled) {
+  border-color: var(--color-secondary);
+}
+
+.choice[aria-checked="true"] {
+  border-color: var(--color-primary);
+}
+
+.choice:disabled {
+  cursor: not-allowed;
+}
+
+.choiceText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.choiceLabel {
+  font-weight: var(--font-weight-semibold);
+}
+
+.choiceDescription {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+/* Uma opção por linha, com marcador de rádio e descrição. */
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.list .choice {
+  padding: var(--space-3) var(--space-4);
+}
+
+.radio {
+  flex: none;
+  width: var(--icon-sm);
+  height: var(--icon-sm);
+  margin-top: 0.125rem;
+  border: 2px solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+.choice[aria-checked="true"] .radio {
+  border-color: var(--color-primary);
+  /* Miolo do rádio marcado, sem elemento extra. */
+  box-shadow: inset 0 0 0 3px var(--color-surface-raised);
+  background: var(--color-primary);
+}
+
+/* Opções curtas lado a lado; a marcada fica preenchida. */
+.segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.segmented .choice {
+  flex: 1 1 8rem;
+  justify-content: center;
+  min-height: var(--control-height);
+  align-items: center;
+  padding: 0 var(--space-4);
+  text-align: center;
+}
+
+.segmented .choice[aria-checked="true"] {
+  background: var(--color-primary);
+  color: var(--color-on-primary);
+}
+
+.segmented .choice[aria-checked="true"] .choiceDescription {
+  color: var(--color-on-primary);
+}

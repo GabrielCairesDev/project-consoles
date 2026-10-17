@@ -19,3 +19,19 @@ export interface ImageInfo {
   /** Preset Recomendado do console (o padrão). */
   recommended: ImageChoices;
 }
+
+export type ImagePreset = "original" | "recommended" | "custom";
+
+/** Técnicas de imagem, na ordem do pipeline; cresce com o catálogo. */
+const TECHNIQUES = ["scaler"] as const satisfies readonly (keyof ImageChoices)[];
+
+export function sameChoices(a: ImageChoices, b: ImageChoices): boolean {
+  return TECHNIQUES.every((technique) => a[technique] === b[technique]);
+}
+
+/** Preset das escolhas atuais; o preset nunca é gravado, só deduzido. */
+export function presetOf(choices: ImageChoices, info: ImageInfo): ImagePreset {
+  if (sameChoices(choices, info.recommended)) return "recommended";
+  if (sameChoices(choices, info.original)) return "original";
+  return "custom";
+}
