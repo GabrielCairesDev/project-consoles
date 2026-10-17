@@ -12,6 +12,10 @@ pub const MAX_FRAME: (usize, usize) = (genesis::SCREEN_MAX_WIDTH, genesis::SCREE
 /// Quadro de referência do PlayStation (320×240); todos os modos são
 /// esticados para 4:3, como na TV.
 const PLAYSTATION_FRAME: (usize, usize) = (320, 240);
+/// Resolução interna do PlayStation com a melhoria de imagem ligada. 2× é
+/// a maior que manteve todos os quadros abaixo de 16,7 ms num jogo 3D em
+/// release (3× e 4× passaram disso nos piores quadros).
+pub const PLAYSTATION_ENHANCED_RESOLUTION: psx::InternalResolution = psx::InternalResolution::X2;
 
 /// Imagem de um quadro: `size.0` pixels válidos em cada linha de `stride`.
 pub struct Frame<'a> {
@@ -105,6 +109,19 @@ impl Machine {
             resampler: Resampler::new(psx::SAMPLE_RATE, sample_rate),
             native: Vec::new(),
         })
+    }
+
+    /// Liga ou desliga a melhoria de imagem feita dentro do núcleo (hoje só
+    /// a resolução interna do PlayStation; nos outros consoles a melhoria é
+    /// só na apresentação). Não altera a emulação nem o estado salvo.
+    pub fn set_core_enhancement(&mut self, on: bool) {
+        if let Self::PlayStation { console, .. } = self {
+            console.set_internal_resolution(if on {
+                PLAYSTATION_ENHANCED_RESOLUTION
+            } else {
+                psx::InternalResolution::Native
+            });
+        }
     }
 
     pub fn frame_rate(&self) -> f64 {

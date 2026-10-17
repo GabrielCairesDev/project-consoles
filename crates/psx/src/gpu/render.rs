@@ -23,6 +23,17 @@
 //!   protegidos.
 //!
 //! O desenho é instantâneo (sem o tempo de rasterização do chip).
+//!
+//! **Resolução interna maior** (melhoria de imagem, opcional): a VRAM 1×
+//! continua sendo a fonte de verdade — tudo é desenhado nela exatamente
+//! como acima, e é dela que vêm as leituras da CPU, as cópias, as texturas
+//! e as CLUTs. Com escala `s` > 1, cada polígono, retângulo e linha também
+//! é desenhado numa cópia `s`× maior ([`Upscaled`]), que serve só para a
+//! imagem mostrada. Nela os polígonos têm bordas e texturas com `s`× mais
+//! detalhe (vértices × `s`, gradientes por pixel ampliado); retângulos e
+//! linhas ocupam os mesmos blocos `s`×`s` do 1× (sprites ficam nítidos);
+//! transferências, preenchimentos e cópias repetem na cópia o que a VRAM 1×
+//! recebeu, bloco a bloco.
 
 pub(crate) const VRAM_WIDTH: usize = 1024;
 pub(crate) const VRAM_HEIGHT: usize = 512;
@@ -39,6 +50,9 @@ const FRAC: u32 = 12;
 
 /// Maior lista de linhas aceita antes do terminador.
 const MAX_POLYLINE_WORDS: usize = 4096;
+
+/// Maior escala da resolução interna.
+pub(crate) const MAX_SCALE: usize = 4;
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 struct Vertex {
@@ -120,6 +134,105 @@ pub(crate) struct Renderer {
     clut_cache: Box<[u16; 256]>,
     /// CLUT (15 bits) no cache e quantas cores dela foram carregadas.
     clut_tag: Option<(u32, usize)>,
+    /// Cópia ampliada da VRAM (só com escala > 1); derivada da VRAM 1× e
+    /// do desenho, não faz parte do estado do console.
+    upscaled: Option<Upscaled>,
+}
+
+/// VRAM em resolução interna `scale`× maior, só para a imagem.
+#[derive(Clone)]
+pub(crate) struct Upscaled {
+    scale: usize,
+    pixels: Box<[u16]>,
+}
+
+/// `v` dentro de `0..n`, sabendo que `v < 2n` (evita a divisão do `%`).
+fn wrap(v: usize, n: usize) -> usize {
+    if v >= n { v - n } else { v }
+}
+
+impl Upscaled {
+    /// Cópia da VRAM 1× com cada pixel repetido em `scale`×`scale`.
+    fn from_native(vram: &[u16], scale: usize) -> Self {
+        let width = VRAM_WIDTH * scale;
+        let mut pixels = vec![0; width * VRAM_HEIGHT * scale].into_boxed_slice();
+        for (y, row) in pixels.chunks_exact_mut(width).enumerate() {
+            let native = &vram[(y / scale) * VRAM_WIDTH..][..VRAM_WIDTH];
+            for (out, &p) in row.chunks_exact_mut(scale).zip(native) {
+                out.fill(p);
+            }
+        }
+        Self { scale, pixels }
+    }
+
+    pub(crate) fn scale(&self) -> usize {
+        self.scale
+    }
+
+    pub(crate) fn width(&self) -> usize {
+        VRAM_WIDTH * self.scale
+    }
+
+    pub(crate) fn height(&self) -> usize {
+        VRAM_HEIGHT * self.scale
+    }
+
+    /// Linha `y` (`0..height()`) da VRAM ampliada.
+    pub(crate) fn row(&self, y: usize) -> &[u16] {
+        let width = self.width();
+        &self.pixels[y * width..][..width]
+    }
+
+    /// Pixel ampliado; `None` fora da VRAM (o desenho já vem recortado
+    /// pela área, então não acontece).
+    fn pixel_mut(&mut self, x: i32, y: i32) -> Option<&mut u16> {
+        let (x, y) = (usize::try_from(x).ok()?, usize::try_from(y).ok()?);
+        if x >= self.width() {
+            return None;
+        }
+        let i = y * self.width() + x;
+        self.pixels.get_mut(i)
+    }
+
+    /// Bloco do pixel 1× (`x`, `y`), já dentro da VRAM.
+    fn block_start(&self, x: usize, y: usize) -> usize {
+        y * self.scale * self.width() + x * self.scale
+    }
+
+    /// Repete no bloco o valor escrito no pixel 1× (`x`, `y`).
+    fn write_block(&mut self, x: usize, y: usize, value: u16) {
+        let (start, width, scale) = (self.block_start(x, y), self.width(), self.scale);
+        for row in 0..scale {
+            self.pixels[start + row * width..][..scale].fill(value);
+        }
+    }
+
+    /// Copia o bloco do pixel 1× de origem para o de destino, como a VRAM
+    /// 1× fez com o pixel, preservando o detalhe ampliado.
+    fn copy_block(&mut self, src: (usize, usize), dst: (usize, usize), mask: u16) {
+        let (from, to) = (
+            self.block_start(src.0, src.1),
+            self.block_start(dst.0, dst.1),
+        );
+        let (width, scale) = (self.width(), self.scale);
+        for row in 0..scale {
+            for i in 0..scale {
+                let value = self.pixels[from + row * width + i];
+                self.pixels[to + row * width + i] = value | mask;
+            }
+        }
+    }
+
+    /// GP0 02h no retângulo 1× (`x`, `y`, `w`, `h`), com as voltas da VRAM.
+    fn fill(&mut self, (x, y, w, h): (usize, usize, usize, usize), value: u16) {
+        let (width, height, scale) = (self.width(), self.height(), self.scale);
+        for dy in 0..h * scale {
+            let row = wrap(y * scale + dy, height) * width;
+            for dx in 0..w * scale {
+                self.pixels[row + wrap(x * scale + dx, width)] = value;
+            }
+        }
+    }
 }
 
 impl Default for Renderer {
@@ -147,6 +260,7 @@ impl Default for Renderer {
             irq_requested: false,
             clut_cache: Box::new([0; 256]),
             clut_tag: None,
+            upscaled: None,
         }
     }
 }
@@ -195,11 +309,35 @@ fn command_length(command: u32) -> Option<usize> {
 
 impl Renderer {
     pub(crate) fn reset(&mut self) {
+        // O reset da GPU não apaga a VRAM (nem a cópia ampliada).
         let vram = std::mem::take(&mut self.vram);
+        let upscaled = self.upscaled.take();
         *self = Self {
             vram,
+            upscaled,
             ..Self::default()
         };
+    }
+
+    /// Escala da resolução interna (1 = nativa, até [`MAX_SCALE`]). Refaz a
+    /// cópia ampliada a partir da VRAM 1× — também serve para ressincronizá-la
+    /// depois de a VRAM mudar por fora do desenho (estado carregado).
+    pub(crate) fn set_scale(&mut self, scale: usize) {
+        let scale = scale.clamp(1, MAX_SCALE);
+        self.upscaled = (scale > 1).then(|| Upscaled::from_native(&self.vram, scale));
+    }
+
+    pub(crate) fn scale(&self) -> usize {
+        self.upscaled.as_ref().map_or(1, Upscaled::scale)
+    }
+
+    pub(crate) fn upscaled(&self) -> Option<&Upscaled> {
+        self.upscaled.as_ref()
+    }
+
+    /// Escala da cópia ampliada, se houver, para desenhar nela também.
+    fn upscaled_scale(&self) -> Option<i32> {
+        self.upscaled.as_ref().map(|up| up.scale as i32)
     }
 
     pub(crate) fn reset_command_buffer(&mut self) {
@@ -243,13 +381,15 @@ impl Renderer {
         self.vram[(y % VRAM_HEIGHT) * VRAM_WIDTH + (x % VRAM_WIDTH)] = value;
     }
 
-    /// Escreve respeitando a máscara (para transferências e cópias).
-    fn write_masked(&mut self, x: usize, y: usize, value: u16) {
+    /// Escreve respeitando a máscara (para transferências e cópias);
+    /// devolve se escreveu.
+    fn write_masked(&mut self, x: usize, y: usize, value: u16) -> bool {
         if self.mask_check && self.pixel(x, y) & 0x8000 != 0 {
-            return;
+            return false;
         }
         let value = value | if self.mask_set { 0x8000 } else { 0 };
         self.set_pixel(x, y, value);
+        true
     }
 
     /// GPUREAD: pixels da transferência VRAM → CPU, dois por palavra.
@@ -276,7 +416,13 @@ impl Renderer {
                 if i < w * h {
                     let px = (x + i % w) as usize;
                     let py = (y + i / w) as usize;
-                    self.write_masked(px, py, (word >> (16 * half)) as u16);
+                    let value = (word >> (16 * half)) as u16;
+                    if self.write_masked(px, py, value)
+                        && let Some(up) = &mut self.upscaled
+                    {
+                        let value = value | if self.mask_set { 0x8000 } else { 0 };
+                        up.write_block(px % VRAM_WIDTH, py % VRAM_HEIGHT, value);
+                    }
                     i += 1;
                 }
             }
@@ -487,7 +633,26 @@ impl Renderer {
         }
     }
 
+    /// Desenha o triângulo na cópia ampliada (antes, para ler as texturas
+    /// como estavam antes do primitivo) e na VRAM 1×.
     fn triangle(&mut self, p: &Primitive, a: Vertex, b: Vertex, c: Vertex, gouraud: bool) {
+        if let Some(s) = self.upscaled_scale() {
+            self.triangle_at(s, p, a, b, c, gouraud);
+        }
+        self.triangle_at(1, p, a, b, c, gouraud);
+    }
+
+    /// Rasteriza o triângulo com os vértices e a área de desenho
+    /// multiplicados por `s` (1 = VRAM 1×, senão a cópia ampliada).
+    fn triangle_at(
+        &mut self,
+        s: i32,
+        p: &Primitive,
+        a: Vertex,
+        b: Vertex,
+        c: Vertex,
+        gouraud: bool,
+    ) {
         let xs = [a.x, b.x, c.x];
         let ys = [a.y, b.y, c.y];
         let (min_x, max_x) = (xs.iter().min().copied(), xs.iter().max().copied());
@@ -499,6 +664,13 @@ impl Renderer {
         if max_x - min_x >= 1024 || max_y - min_y >= 512 {
             return;
         }
+        let scaled = |v: Vertex| Vertex {
+            x: v.x * s,
+            y: v.y * s,
+            ..v
+        };
+        let (a, b, c) = (scaled(a), scaled(b), scaled(c));
+        let (min_x, max_x, min_y, max_y) = (min_x * s, max_x * s, min_y * s, max_y * s);
         let area = i64::from(b.x - a.x) * i64::from(c.y - a.y)
             - i64::from(b.y - a.y) * i64::from(c.x - a.x);
         if area == 0 {
@@ -563,10 +735,11 @@ impl Renderer {
             if top || left { 0 } else { -1 }
         });
 
-        let left = min_x.max(self.area_left);
-        let right = max_x.min(self.area_right);
-        let top = min_y.max(self.area_top);
-        let bottom = max_y.min(self.area_bottom);
+        // Cada pixel 1× da área vira um bloco s×s.
+        let left = min_x.max(self.area_left * s);
+        let right = max_x.min(self.area_right * s + s - 1);
+        let top = min_y.max(self.area_top * s);
+        let bottom = max_y.min(self.area_bottom * s + s - 1);
         if left > right || top > bottom {
             return;
         }
@@ -591,7 +764,7 @@ impl Renderer {
                     let rgb = color.map(|c| (c >> FRAC) as i32);
                     let texel = (u >> FRAC) as i32 & 0xFF;
                     let texel_v = (v >> FRAC) as i32 & 0xFF;
-                    self.shade(p, x, y, rgb, texel, texel_v);
+                    self.shade(p, s, (x, y), rgb, (texel, texel_v));
                 }
                 for i in 0..3 {
                     w[i] += step_x[i];
@@ -626,19 +799,44 @@ impl Renderer {
         }
     }
 
-    /// Cor final de um pixel e escrita na VRAM.
-    fn shade(&mut self, p: &Primitive, x: i32, y: i32, rgb: [i32; 3], u: i32, v: i32) {
+    /// Cor final do pixel (`x`, `y`) na escala `s` e escrita.
+    fn shade(
+        &mut self,
+        p: &Primitive,
+        s: i32,
+        (x, y): (i32, i32),
+        rgb: [i32; 3],
+        (u, v): (i32, i32),
+    ) {
+        // O dithering segue a grade 1× (mesmo padrão na imagem ampliada).
+        let (dx, dy) = if s == 1 { (x, y) } else { (x / s, y / s) };
+        if let Some((color, semi)) = self.color(p, dx, dy, rgb, u, v) {
+            self.put(p, s, x, y, color, semi);
+        }
+    }
+
+    /// Cor de 15 bits do pixel 1× (`x`, `y`) e se ele é semitransparente;
+    /// `None` para texel transparente.
+    fn color(
+        &self,
+        p: &Primitive,
+        x: i32,
+        y: i32,
+        rgb: [i32; 3],
+        u: i32,
+        v: i32,
+    ) -> Option<(u16, bool)> {
         let dither = if p.dither {
             DITHER[(y & 3) as usize][(x & 3) as usize]
         } else {
             0
         };
         let to5 = |c: i32| ((c + dither).clamp(0, 255) >> 3) as u16;
-        let (mut color, semi) = match &p.texture {
+        Some(match &p.texture {
             Some(t) => {
                 let texel = self.texel(t, u, v);
                 if texel == 0 {
-                    return;
+                    return None;
                 }
                 let color = if t.raw {
                     texel & 0x7FFF
@@ -658,19 +856,33 @@ impl Renderer {
                 to5(rgb[0]) | (to5(rgb[1]) << 5) | (to5(rgb[2]) << 10),
                 p.semi_transparent,
             ),
+        })
+    }
+
+    /// Escreve a cor no pixel (`x`, `y`) da escala `s`, com a máscara e a
+    /// semitransparência sobre o que já está lá.
+    fn put(&mut self, p: &Primitive, s: i32, x: i32, y: i32, mut color: u16, semi: bool) {
+        let (mask_check, mask_set) = (self.mask_check, self.mask_set);
+        let pixel = if s == 1 {
+            let (px, py) = (x as usize, y as usize);
+            &mut self.vram[(py % VRAM_HEIGHT) * VRAM_WIDTH + (px % VRAM_WIDTH)]
+        } else {
+            match self.upscaled.as_mut().and_then(|up| up.pixel_mut(x, y)) {
+                Some(pixel) => pixel,
+                None => return,
+            }
         };
-        let (px, py) = (x as usize, y as usize);
-        let background = self.pixel(px, py);
-        if self.mask_check && background & 0x8000 != 0 {
+        let background = *pixel;
+        if mask_check && background & 0x8000 != 0 {
             return;
         }
         if semi {
             color = blend(background, color, p.blend) | (color & 0x8000);
         }
-        if self.mask_set {
+        if mask_set {
             color |= 0x8000;
         }
-        self.set_pixel(px, py, color);
+        *pixel = color;
     }
 
     fn lines(&mut self, words: &[u32]) {
@@ -757,12 +969,24 @@ impl Renderer {
         let sc = [0, 1, 2].map(|i| color_step(b.color[i] - a.color[i]));
         let half = 1i64 << (FRAC - 1);
         let mut color = [0, 1, 2].map(|i| to_fixed(a.color[i]) + half);
+        let upscale = self.upscaled_scale();
         for _ in 0..=steps {
             let (px, py) = ((x >> 32) as i32, (y >> 32) as i32);
             if (self.area_left..=self.area_right).contains(&px)
                 && (self.area_top..=self.area_bottom).contains(&py)
             {
-                self.shade(p, px, py, color.map(|c| (c >> FRAC) as i32), 0, 0);
+                let rgb = color.map(|c| (c >> FRAC) as i32);
+                if let Some((value, semi)) = self.color(p, px, py, rgb, 0, 0) {
+                    // Na cópia ampliada a linha ocupa os blocos dos pixels 1×.
+                    if let Some(s) = upscale {
+                        for y in py * s..(py + 1) * s {
+                            for x in px * s..(px + 1) * s {
+                                self.put(p, s, x, y, value, semi);
+                            }
+                        }
+                    }
+                    self.put(p, 1, px, py, value, semi);
+                }
             }
             x += sx;
             y += sy;
@@ -813,17 +1037,43 @@ impl Renderer {
         if self.flip_x {
             u0 |= 1;
         }
-        let left = x0.max(self.area_left);
-        let right = (x0 + w - 1).min(self.area_right);
-        let top = y0.max(self.area_top);
-        let bottom = (y0 + h - 1).min(self.area_bottom);
+        let rect = (x0, y0, w, h, u0, v0);
+        if let Some(s) = self.upscaled_scale() {
+            self.rectangle_at(s, &primitive, rect, color);
+        }
+        self.rectangle_at(1, &primitive, rect, color);
+    }
+
+    /// Retângulo (`x0`, `y0`, `w`, `h`, `u0`, `v0`) na escala `s`: cada
+    /// pixel 1× vira um bloco s×s com o mesmo texel.
+    fn rectangle_at(
+        &mut self,
+        s: i32,
+        p: &Primitive,
+        (x0, y0, w, h, u0, v0): (i32, i32, i32, i32, i32, i32),
+        color: [i32; 3],
+    ) {
+        let (x0s, y0s) = (x0 * s, y0 * s);
+        let left = x0s.max(self.area_left * s);
+        let right = ((x0 + w) * s - 1).min(self.area_right * s + s - 1);
+        let top = y0s.max(self.area_top * s);
+        let bottom = ((y0 + h) * s - 1).min(self.area_bottom * s + s - 1);
+        if left > right {
+            return;
+        }
         for y in top..=bottom {
-            let dy = y - y0;
+            let dy = (y - y0s) / s;
             let v = if self.flip_y { v0 - dy } else { v0 + dy } & 0xFF;
+            // Coluna 1× e posição dentro do bloco, sem dividir por pixel.
+            let (mut dx, mut sub) = ((left - x0s) / s, (left - x0s) % s);
             for x in left..=right {
-                let dx = x - x0;
                 let u = if self.flip_x { u0 - dx } else { u0 + dx } & 0xFF;
-                self.shade(&primitive, x, y, color, u, v);
+                self.shade(p, s, (x, y), color, (u, v));
+                sub += 1;
+                if sub == s {
+                    sub = 0;
+                    dx += 1;
+                }
             }
         }
     }
@@ -840,6 +1090,9 @@ impl Renderer {
                 self.set_pixel((x + dx) as usize, (y + dy) as usize, color);
             }
         }
+        if let Some(up) = &mut self.upscaled {
+            up.fill((x as usize, y as usize, w as usize, h as usize), color);
+        }
     }
 
     /// GP0 80h: cópia VRAM → VRAM, pixel a pixel (com a máscara).
@@ -854,8 +1107,16 @@ impl Renderer {
         for y in 0..h {
             for x in 0..w {
                 let x = if reverse { w - 1 - x } else { x };
-                let value = self.pixel((sx + x) as usize, (sy + y) as usize);
-                self.write_masked((dx + x) as usize, (dy + y) as usize, value);
+                let (from_x, from_y) = ((sx + x) as usize, (sy + y) as usize);
+                let (to_x, to_y) = ((dx + x) as usize, (dy + y) as usize);
+                let value = self.pixel(from_x, from_y);
+                if self.write_masked(to_x, to_y, value)
+                    && let Some(up) = &mut self.upscaled
+                {
+                    let wrap_xy = |x: usize, y: usize| (x % VRAM_WIDTH, y % VRAM_HEIGHT);
+                    let mask = if self.mask_set { 0x8000 } else { 0 };
+                    up.copy_block(wrap_xy(from_x, from_y), wrap_xy(to_x, to_y), mask);
+                }
             }
         }
     }

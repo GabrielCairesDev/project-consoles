@@ -189,6 +189,32 @@ fn gpu_programs_match_hardware_vram() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// A resolução interna é só apresentação: com 4× a VRAM 1× e o texto de
+/// cada programa de GPU são os mesmos que em 1×.
+#[test]
+#[ignore = "precisa do BIOS e dos programas de teste (PSX_TESTS_DIR)"]
+fn gpu_programs_ignore_internal_resolution() {
+    let Some(dir) = tests_dir() else {
+        panic!("defina PSX_TESTS_DIR");
+    };
+    for program in GPU_PROGRAMS {
+        let path = dir.join("ps1-tests").join(format!("{}.exe", program.name));
+        let exe = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let run = |resolution| {
+            let mut console = console(&dir);
+            console.set_internal_resolution(resolution);
+            console.load_exe(&exe).expect("PS-EXE válido");
+            for _ in 0..FRAMES {
+                console.run_frame();
+            }
+            (console.vram().to_vec(), tty(&console), console.cycles())
+        };
+        let native = run(psx::InternalResolution::Native);
+        let upscaled = run(psx::InternalResolution::X4);
+        assert!(native == upscaled, "{}: 4× mudou a emulação", program.name);
+    }
+}
+
 /// Vídeo do MDEC: a foto do `mdec/frame` (320×240, 15 bits, DMA). A
 /// fórmula exata da IDCT do hardware não é conhecida, então cada canal pode
 /// diferir em 1 (de 31); hoje 17 848 pixels diferem assim.
@@ -304,4 +330,71 @@ fn bios_boots_the_game_from_disc() {
     let out = tty(&console);
     assert!(out.contains("BOOT ="), "{out}");
     assert!(out.contains("EXEC:PC0("), "{out}");
+}
+
+/// Desempenho da resolução interna num jogo de verdade (release). Mede o
+/// tempo por quadro em cada escala, depois da abertura, e confere que a
+/// emulação (VRAM 1× e ciclos) é idêntica em todas. Com `PSX_SCREENSHOT_DIR`
+/// grava o último quadro de cada escala em PNG.
+///
+/// ```text
+/// PSX_TESTS_DIR=~/psx-tests PSX_DISC=jogo.cue cargo test -p psx --release \
+///     --test test_programs internal_resolution_speed -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "precisa do BIOS (PSX_TESTS_DIR) e de um jogo (PSX_DISC)"]
+fn internal_resolution_speed() {
+    let (Some(dir), Some(disc)) = (tests_dir(), std::env::var_os("PSX_DISC")) else {
+        panic!("defina PSX_TESTS_DIR e PSX_DISC");
+    };
+    const WARMUP: u32 = 1500;
+    const MEASURED: u32 = 1200;
+    let mut reference = None;
+    for scale in 1..=4 {
+        let resolution = psx::InternalResolution::from_scale(scale).expect("escala de 1 a 4");
+        let mut console = console(&dir);
+        console.set_internal_resolution(resolution);
+        console.insert_disc(psx::Disc::open(Path::new(&disc)).expect("imagem válida"));
+        for _ in 0..WARMUP {
+            console.run_frame();
+        }
+        let mut worst = std::time::Duration::ZERO;
+        let start = std::time::Instant::now();
+        for _ in 0..MEASURED {
+            let frame = std::time::Instant::now();
+            console.run_frame();
+            worst = worst.max(frame.elapsed());
+        }
+        let elapsed = start.elapsed();
+        let fps = f64::from(MEASURED) / elapsed.as_secs_f64();
+        let (_, size) = console.framebuffer();
+        println!(
+            "{scale}×: {fps:.0} quadros/s (pior quadro {:.1} ms), imagem {}×{}",
+            worst.as_secs_f64() * 1000.0,
+            size.0,
+            size.1
+        );
+        if let Some(out) = std::env::var_os("PSX_SCREENSHOT_DIR") {
+            save_png(&Path::new(&out).join(format!("{scale}x.png")), &console);
+        }
+        let state = (console.vram().to_vec(), console.cycles());
+        match &reference {
+            None => reference = Some(state),
+            Some(native) => assert!(*native == state, "{scale}× mudou a emulação"),
+        }
+    }
+}
+
+fn save_png(path: &Path, console: &psx::Console) {
+    let (pixels, (width, height)) = console.framebuffer();
+    let file = std::fs::File::create(path).expect("criar o PNG");
+    let mut encoder = png::Encoder::new(file, width as u32, height as u32);
+    encoder.set_color(png::ColorType::Rgb);
+    encoder.set_depth(png::BitDepth::Eight);
+    let rgb: Vec<u8> = pixels
+        .iter()
+        .flat_map(|&p| [(p >> 16) as u8, (p >> 8) as u8, p as u8])
+        .collect();
+    let mut writer = encoder.write_header().expect("cabeçalho do PNG");
+    writer.write_image_data(&rgb).expect("gravar o PNG");
 }

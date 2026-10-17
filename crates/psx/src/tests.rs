@@ -75,3 +75,17 @@ fn frame_lasts_one_ntsc_field() {
     // 263 linhas × 3413 tiques × 7/11 ≈ 571212 ciclos.
     assert!((first + 571_000..first + 571_500).contains(&console.cycles()));
 }
+
+#[test]
+fn internal_resolution_round_trips_and_defaults_to_native() {
+    let mut console = Console::new(&[0; BIOS_SIZE]).expect("BIOS");
+    assert_eq!(console.internal_resolution(), InternalResolution::Native);
+    for scale in 1..=4 {
+        let resolution = InternalResolution::from_scale(scale).expect("1 a 4");
+        assert_eq!(resolution.scale(), scale);
+        console.set_internal_resolution(resolution);
+        assert_eq!(console.internal_resolution(), resolution);
+    }
+    assert_eq!(InternalResolution::from_scale(0), None);
+    assert_eq!(InternalResolution::from_scale(5), None);
+}
