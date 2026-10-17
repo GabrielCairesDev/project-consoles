@@ -31,7 +31,7 @@ const SMS: Console = {
   playable: true,
   needsBios: false,
   resumable: true,
-  enhancement: null,
+  image: null,
 };
 
 const DEFAULTS: Bindings = {

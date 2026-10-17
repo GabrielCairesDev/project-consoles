@@ -25,7 +25,7 @@ const CONSOLES: Console[] = [
     playable: false,
     needsBios: false,
     resumable: true,
-    enhancement: null,
+    image: null,
   },
 ];
 

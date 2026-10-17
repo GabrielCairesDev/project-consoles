@@ -30,7 +30,7 @@ const SMS: Console = {
   playable: true,
   needsBios: false,
   resumable: true,
-  enhancement: "pixelArt",
+  image: { scalers: ["nearest", "epx"], original: { scaler: "nearest" }, recommended: { scaler: "epx" } },
 };
 
 const PS1: Console = {
@@ -41,7 +41,7 @@ const PS1: Console = {
   releaseYear: 1994,
   needsBios: true,
   resumable: false,
-  enhancement: "smooth",
+  image: { scalers: ["nearest", "bilinear"], original: { scaler: "nearest" }, recommended: { scaler: "bilinear" } },
 };
 
 function Harness({
@@ -58,7 +58,7 @@ function Harness({
 describe("SettingsDialog", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    getMock.mockResolvedValue({ resume: true, enhance: true });
+    getMock.mockResolvedValue({ resume: true, image: { scaler: "epx" } });
     saveMock.mockImplementation(async (_id, settings) => settings);
   });
 
@@ -78,7 +78,7 @@ describe("SettingsDialog", () => {
 
     fireEvent.click(await screen.findByRole("switch", { name: "Continuar de onde parou" }));
 
-    expect(saveMock).toHaveBeenCalledWith("master-system", { resume: false, enhance: true });
+    expect(saveMock).toHaveBeenCalledWith("master-system", { resume: false, image: { scaler: "epx" } });
     await waitFor(() =>
       expect(screen.getByRole("switch", { name: "Continuar de onde parou" })).not.toBeChecked(),
     );
@@ -90,7 +90,7 @@ describe("SettingsDialog", () => {
 
     fireEvent.click(screen.getByText("Continuar de onde parou"));
 
-    expect(saveMock).toHaveBeenCalledWith("master-system", { resume: false, enhance: true });
+    expect(saveMock).toHaveBeenCalledWith("master-system", { resume: false, image: { scaler: "epx" } });
   });
 
   it("falha ao salvar volta ao valor anterior e mostra o erro", async () => {
@@ -177,7 +177,7 @@ describe("SettingsDialog", () => {
     expect(option).toHaveAccessibleDescription(/pixel art/);
     fireEvent.click(option);
 
-    expect(saveMock).toHaveBeenCalledWith("master-system", { resume: true, enhance: false });
+    expect(saveMock).toHaveBeenCalledWith("master-system", { resume: true, image: { scaler: "nearest" } });
     await waitFor(() =>
       expect(screen.getByRole("switch", { name: "Melhoria de imagem" })).not.toBeChecked(),
     );
@@ -186,7 +186,7 @@ describe("SettingsDialog", () => {
 
   it("PlayStation explica a suavização dos gráficos 3D", async () => {
     vi.mocked(getBios).mockResolvedValue({ installed: true });
-    getMock.mockResolvedValue({ resume: true, enhance: false });
+    getMock.mockResolvedValue({ resume: true, image: { scaler: "nearest" } });
     render(<Harness console={PS1} />);
 
     const option = await screen.findByRole("switch", { name: "Melhoria de imagem" });
@@ -195,7 +195,7 @@ describe("SettingsDialog", () => {
   });
 
   it("console sem melhoria de imagem não mostra a opção", async () => {
-    render(<Harness console={{ ...SMS, enhancement: null }} />);
+    render(<Harness console={{ ...SMS, image: null }} />);
     await screen.findByRole("switch", { name: "Continuar de onde parou" });
 
     expect(screen.queryByRole("switch", { name: "Melhoria de imagem" })).not.toBeInTheDocument();

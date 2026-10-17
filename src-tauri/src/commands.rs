@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use player::controls::{Bindings, SUPPORTED_KEYS, System};
+use player::image::{ImageSettings, Scaler};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
@@ -15,7 +16,7 @@ use crate::covers::{Cover, CoverStore, LibretroThumbnails};
 use crate::library::{self, FingerprintCache, Game};
 use crate::runtime::{self, LaunchOptions, Runner};
 use crate::saves::SaveStore;
-use crate::settings::{ConsoleSettings, Settings};
+use crate::settings::{ConsoleSettings, ImageChoices, Settings};
 use crate::systems;
 
 /// Estado compartilhado entre os comandos.
@@ -85,9 +86,29 @@ pub struct ConsoleInfo {
     needs_bios: bool,
     /// O núcleo sabe "continuar de onde parou".
     resumable: bool,
-    /// Melhoria de imagem do console ([`player::Enhancement::id`]), se ele
-    /// roda.
-    enhancement: Option<&'static str>,
+    /// Opções de imagem do console, se ele roda.
+    image: Option<ImageInfo>,
+}
+
+/// O que a tela de configurações de imagem pode oferecer num console.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageInfo {
+    /// Ampliações do console ([`Scaler::id`]), na ordem de exibição.
+    scalers: Vec<&'static str>,
+    /// Presets, para a interface reconhecer o atual.
+    original: ImageChoices,
+    recommended: ImageChoices,
+}
+
+impl ImageInfo {
+    fn for_system(system: System) -> Self {
+        Self {
+            scalers: Scaler::available(system).iter().map(|s| s.id()).collect(),
+            original: ImageSettings::ORIGINAL.into(),
+            recommended: ImageSettings::recommended(system).into(),
+        }
+    }
 }
 
 /// Lista o catálogo de consoles para a interface.
@@ -103,7 +124,7 @@ pub fn list_consoles() -> Vec<ConsoleInfo> {
                 playable: system.is_some(),
                 needs_bios: system.is_some_and(System::needs_bios),
                 resumable: system.is_some_and(System::saves_state),
-                enhancement: system.map(|s| player::Enhancement::for_system(s).id()),
+                image: system.map(ImageInfo::for_system),
             }
         })
         .collect()
@@ -287,7 +308,7 @@ fn launch_options(state: &AppState, game: &Game) -> CommandResult<LaunchOptions>
         // O save do próprio jogo vale sempre, com ou sem "continuar".
         battery_path: Some(state.saves.battery_path_for(game)),
         bios_path,
-        enhance: console_settings.enhance,
+        image: console_settings.image.resolve(system),
     };
     Ok(options)
 }
@@ -449,8 +470,11 @@ pub fn get_console_settings(
     console_id: String,
     state: State<'_, Arc<AppState>>,
 ) -> CommandResult<ConsoleSettings> {
-    playable_system(&console_id)?;
-    Ok(lock(&state.settings).console(&console_id))
+    let system = playable_system(&console_id)?;
+    let mut settings = lock(&state.settings).console(&console_id);
+    // A interface recebe a configuração efetiva, com cada escolha explícita.
+    settings.image = settings.image.resolve(system).into();
+    Ok(settings)
 }
 
 /// Salva as opções de jogo do console; nada muda se a gravação falhar.
@@ -460,12 +484,13 @@ pub async fn set_console_settings(
     settings: ConsoleSettings,
     state: State<'_, Arc<AppState>>,
 ) -> CommandResult<ConsoleSettings> {
-    playable_system(&console_id)?;
+    let system = playable_system(&console_id)?;
+    settings.image.check(system)?;
     let state = Arc::clone(&state);
     tauri::async_runtime::spawn_blocking(move || {
         let mut current = lock(&state.settings);
         let mut updated = current.clone();
-        updated.set_console(&console_id, settings);
+        updated.set_console(&console_id, settings.clone());
         updated
             .save(&state.settings_path)
             .map_err(|error| format!("Não foi possível salvar as configurações: {error}"))?;
@@ -767,7 +792,7 @@ mod tests {
             state_path: None,
             battery_path: None,
             bios_path: None,
-            enhance: true,
+            image: ImageSettings::ORIGINAL,
         };
         state
             .runner
@@ -826,12 +851,17 @@ mod tests {
         let find = |id: &str| consoles.iter().find(|c| c.console.id == id).expect(id);
         let ps1 = find("playstation");
         assert!(ps1.supported && ps1.playable && ps1.needs_bios && !ps1.resumable);
-        assert_eq!(ps1.enhancement, Some("smooth"));
+        let ps1_image = ps1.image.as_ref().expect("imagem do PS1");
+        assert_eq!(ps1_image.scalers, ["nearest", "bilinear"]);
+        assert_eq!(ps1_image.recommended.scaler.as_deref(), Some("bilinear"));
+        assert_eq!(ps1_image.original.scaler.as_deref(), Some("nearest"));
         let sms = find("master-system");
         assert!(sms.playable && !sms.needs_bios && sms.resumable);
-        assert_eq!(sms.enhancement, Some("pixelArt"));
+        let sms_image = sms.image.as_ref().expect("imagem do Master System");
+        assert_eq!(sms_image.scalers, ["nearest", "epx"]);
+        assert_eq!(sms_image.recommended.scaler.as_deref(), Some("epx"));
         let ps2 = find("playstation-2");
         assert!(!ps2.playable && !ps2.needs_bios && !ps2.resumable);
-        assert_eq!(ps2.enhancement, None);
+        assert_eq!(ps2.image, None);
     }
 }

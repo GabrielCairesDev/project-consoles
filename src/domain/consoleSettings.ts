@@ -1,7 +1,9 @@
+import type { ImageChoices } from "./image";
+
 /** Opções de jogo de um console; espelha `settings::ConsoleSettings`. */
 export interface ConsoleSettings {
   /** Salvar o progresso ao fechar e continuar dele ao abrir. */
   resume: boolean;
-  /** Melhoria de imagem ligada (o padrão); desligada, a imagem é a original. */
-  enhance: boolean;
+  /** Escolhas de imagem; o launcher sempre devolve cada uma explícita. */
+  image: ImageChoices;
 }

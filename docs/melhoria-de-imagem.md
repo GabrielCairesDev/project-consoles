@@ -95,7 +95,7 @@ Proporção (original, 4:3, pixels quadrados), escala inteira ou preencher, e co
 Ao implementar ou medir uma técnica, atualize esta matriz (custo e estado).
 
 ## 6. Configurações salvas
-- Ficam por console em `ConsoleSettings`, como estrutura tipada (preset + uma opção por técnica), não como booleano.
+- Ficam por console em `ConsoleSettings.image` (`ImageChoices`), com uma escolha por técnica, gravada pelo id estável do player (`player::image`). Escolha ausente vale o Recomendado. O preset não é gravado: ele é deduzido comparando as escolhas com Original e Recomendado.
 - Migração do formato antigo: `enhance: true` vira Recomendado; `enhance: false` vira Original.
 - Um valor desconhecido ou inválido não derruba o app. Aquele campo volta ao Recomendado, o problema é registrado em log e o resto da configuração é preservado.
 - O launcher passa a configuração ao processo do jogo de forma tipada. O player valida, e um valor recusado é informado, nunca ignorado em silêncio.

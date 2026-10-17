@@ -11,6 +11,7 @@
 mod audio;
 pub mod controls;
 mod enhance;
+pub mod image;
 mod machine;
 mod resample;
 mod ring;
@@ -32,9 +33,9 @@ use winit::window::{Window, WindowId};
 
 use audio::AudioOut;
 use controls::Bindings;
+use image::{ImageError, ImageSettings};
 use machine::{Machine, MachineError};
 use rom::RomReadError;
-pub use video::Enhancement;
 
 /// Taxa usada quando não há áudio: os chips precisam de alguma taxa de saída.
 const FALLBACK_SAMPLE_RATE: u32 = 44_100;
@@ -56,6 +57,8 @@ pub enum PlayerError {
     Window(winit::error::OsError),
     Surface(softbuffer::SoftBufferError),
     SaveState(std::io::Error),
+    /// Configuração de imagem com uma escolha que o console não tem.
+    Image(ImageError),
 }
 
 impl fmt::Display for PlayerError {
@@ -70,6 +73,7 @@ impl fmt::Display for PlayerError {
             Self::Window(e) => write!(f, "não foi possível abrir a janela: {e}"),
             Self::Surface(e) => write!(f, "falha ao desenhar na janela: {e}"),
             Self::SaveState(e) => write!(f, "não foi possível salvar o progresso: {e}"),
+            Self::Image(e) => write!(f, "configuração de imagem inválida: {e}"),
         }
     }
 }
@@ -177,17 +181,18 @@ pub fn check_bios(system: controls::System, bytes: &[u8]) -> Result<(), BiosErro
 /// BIOS em `bios_path`; ele ainda não salva estado, então `state_path` é
 /// ignorado.
 ///
-/// Com `enhance`, a imagem passa pela melhoria do console
-/// ([`Enhancement::for_system`]); sem, é a original, pixel a pixel.
+/// `image` é a configuração de imagem do usuário; uma escolha que não
+/// existe no console é recusada antes de abrir o jogo.
 pub fn run(
     rom_path: &Path,
     bindings: Bindings,
     state_path: Option<PathBuf>,
     battery_path: Option<PathBuf>,
     bios_path: Option<PathBuf>,
-    enhance: bool,
+    image: ImageSettings,
 ) -> Result<(), PlayerError> {
     let system = bindings.system();
+    let image = image.check(system).map_err(PlayerError::Image)?;
     let audio = match AudioOut::open() {
         Ok(audio) => Some(audio),
         Err(reason) => {
@@ -224,7 +229,7 @@ pub fn run(
         mono_scratch: Vec::new(),
         context,
         window: None,
-        renderer: video::Renderer::new(enhance.then(|| Enhancement::for_system(system))),
+        renderer: video::Renderer::new(image.scaler),
         bindings,
         state_path,
         battery_path,

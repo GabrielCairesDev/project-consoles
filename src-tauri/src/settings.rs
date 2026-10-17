@@ -6,6 +6,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use player::controls::{BindingError, Bindings, System};
+use player::image::{ImageSettings, Scaler};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,23 +23,108 @@ pub struct Settings {
 }
 
 /// Opções de jogo de um console.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", from = "StoredConsoleSettings")]
 pub struct ConsoleSettings {
     /// Salvar o progresso ao fechar e continuar dele ao abrir.
     pub resume: bool,
-    /// Melhoria de imagem do console ([`player::Enhancement`]); desligada,
-    /// a imagem é a original.
-    pub enhance: bool,
+    /// Escolhas de imagem do usuário (`docs/melhoria-de-imagem.md`).
+    pub image: ImageChoices,
 }
 
 impl Default for ConsoleSettings {
     fn default() -> Self {
         Self {
             resume: true,
-            enhance: true,
+            image: ImageChoices::default(),
         }
     }
+}
+
+/// Formato gravado, incluindo o antigo: até a imagem configurável, um
+/// único `enhance` ligava ou desligava a melhoria.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredConsoleSettings {
+    #[serde(default = "resume_by_default")]
+    resume: bool,
+    image: Option<ImageChoices>,
+    enhance: Option<bool>,
+}
+
+fn resume_by_default() -> bool {
+    ConsoleSettings::default().resume
+}
+
+impl From<StoredConsoleSettings> for ConsoleSettings {
+    /// `enhance: false` vira o preset Original; `true` ou ausente, o
+    /// Recomendado. Com `image` gravado, `enhance` não vale mais.
+    fn from(stored: StoredConsoleSettings) -> Self {
+        let image = match (stored.image, stored.enhance) {
+            (Some(image), _) => image,
+            (None, Some(false)) => ImageChoices::from(ImageSettings::ORIGINAL),
+            (None, _) => ImageChoices::default(),
+        };
+        Self {
+            resume: stored.resume,
+            image,
+        }
+    }
+}
+
+/// Escolhas de imagem gravadas, uma por técnica, pelos ids estáveis do
+/// player. Ausente vale o Recomendado do console, que acompanha melhorias
+/// futuras dele.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ImageChoices {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scaler: Option<String>,
+}
+
+impl From<ImageSettings> for ImageChoices {
+    fn from(image: ImageSettings) -> Self {
+        Self {
+            scaler: Some(image.scaler.id().to_owned()),
+        }
+    }
+}
+
+impl ImageChoices {
+    /// Configuração com que o jogo roda. Uma escolha gravada que não existe
+    /// no console (arquivo editado à mão ou de outra versão) vale o
+    /// Recomendado, com aviso; as outras escolhas são mantidas.
+    pub fn resolve(&self, system: System) -> ImageSettings {
+        let recommended = ImageSettings::recommended(system);
+        let scaler = match self.scaler.as_deref() {
+            None => recommended.scaler,
+            Some(id) => scaler_for(system, id).unwrap_or_else(|| {
+                eprintln!(
+                    "ampliação gravada inválida para {} ({id}); usando a recomendada",
+                    system.id()
+                );
+                recommended.scaler
+            }),
+        };
+        ImageSettings { scaler }
+    }
+
+    /// Confere escolhas vindas da interface: qualquer valor que não exista
+    /// no console é recusado, sem gravar nada.
+    pub fn check(&self, system: System) -> Result<(), String> {
+        if let Some(id) = self.scaler.as_deref()
+            && scaler_for(system, id).is_none()
+        {
+            return Err(format!(
+                "A ampliação \"{id}\" não existe para este console."
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn scaler_for(system: System, id: &str) -> Option<Scaler> {
+    Scaler::from_id(id).filter(|scaler| Scaler::available(system).contains(scaler))
 }
 
 impl Settings {
@@ -74,7 +160,7 @@ impl Settings {
     }
 
     pub fn console(&self, console_id: &str) -> ConsoleSettings {
-        self.consoles.get(console_id).copied().unwrap_or_default()
+        self.consoles.get(console_id).cloned().unwrap_or_default()
     }
 
     pub fn set_console(&mut self, console_id: &str, settings: ConsoleSettings) {
@@ -133,14 +219,14 @@ mod tests {
             "master-system",
             ConsoleSettings {
                 resume: false,
-                enhance: true,
+                image: ImageChoices::default(),
             },
         );
         settings.set_console(
             "playstation",
             ConsoleSettings {
                 resume: true,
-                enhance: false,
+                image: ImageChoices::from(ImageSettings::ORIGINAL),
             },
         );
         settings.save(&path).expect("save");
@@ -153,8 +239,20 @@ mod tests {
             "cada console tem as próprias teclas"
         );
         assert!(!loaded.console("master-system").resume);
-        assert!(loaded.console("master-system").enhance);
-        assert!(!loaded.console("playstation").enhance);
+        assert_eq!(
+            loaded
+                .console("master-system")
+                .image
+                .resolve(System::MasterSystem),
+            ImageSettings::recommended(System::MasterSystem)
+        );
+        assert_eq!(
+            loaded
+                .console("playstation")
+                .image
+                .resolve(System::PlayStation),
+            ImageSettings::ORIGINAL
+        );
     }
 
     #[test]
@@ -172,16 +270,76 @@ mod tests {
     }
 
     #[test]
-    fn console_settings_default_to_resume_and_enhance() {
+    fn console_settings_default_to_resume_and_recommended_image() {
         let settings = Settings::default();
-        assert!(settings.console("master-system").resume);
-        assert!(settings.console("master-system").enhance);
-        // Campo ausente no JSON também vale o padrão: arquivos de antes da
-        // melhoria de imagem a ligam.
+        let console = settings.console("master-system");
+        assert!(console.resume);
+        assert_eq!(
+            console.image.resolve(System::MasterSystem),
+            ImageSettings::recommended(System::MasterSystem)
+        );
         let parsed: ConsoleSettings = serde_json::from_str("{}").expect("json");
-        assert!(parsed.resume && parsed.enhance);
+        assert_eq!(parsed, ConsoleSettings::default());
         let older: ConsoleSettings = serde_json::from_str(r#"{ "resume": false }"#).expect("json");
-        assert!(!older.resume && older.enhance);
+        assert!(!older.resume);
+        assert_eq!(older.image, ImageChoices::default());
+    }
+
+    #[test]
+    fn old_enhance_flag_migrates_to_a_preset() {
+        let on: ConsoleSettings =
+            serde_json::from_str(r#"{ "resume": true, "enhance": true }"#).expect("json");
+        assert_eq!(on.image, ImageChoices::default(), "ligada = Recomendado");
+        let off: ConsoleSettings =
+            serde_json::from_str(r#"{ "resume": false, "enhance": false }"#).expect("json");
+        assert!(!off.resume);
+        for system in System::ALL {
+            assert_eq!(
+                off.image.resolve(system),
+                ImageSettings::ORIGINAL,
+                "{system:?}"
+            );
+        }
+        // Com `image` gravado, o `enhance` antigo não vale mais.
+        let both: ConsoleSettings =
+            serde_json::from_str(r#"{ "enhance": false, "image": { "scaler": "epx" } }"#)
+                .expect("json");
+        assert_eq!(both.image.scaler.as_deref(), Some("epx"));
+        // O formato novo não grava mais `enhance`.
+        let written = serde_json::to_string(&off).expect("json");
+        assert!(!written.contains("enhance"), "{written}");
+        let reread: ConsoleSettings = serde_json::from_str(&written).expect("json");
+        assert_eq!(reread, off);
+    }
+
+    #[test]
+    fn invalid_stored_choice_falls_back_to_recommended() {
+        for id in ["xbrz-de-outra-versao", "bilinear"] {
+            let stored: ConsoleSettings = serde_json::from_str(&format!(
+                r#"{{ "resume": false, "image": {{ "scaler": "{id}" }} }}"#
+            ))
+            .expect("um valor desconhecido não corrompe o arquivo");
+            assert!(!stored.resume, "o resto é preservado");
+            assert_eq!(
+                stored.image.resolve(System::Genesis),
+                ImageSettings::recommended(System::Genesis),
+                "{id}"
+            );
+        }
+    }
+
+    #[test]
+    fn choices_from_the_interface_are_checked_per_console() {
+        let epx = ImageChoices {
+            scaler: Some("epx".to_owned()),
+        };
+        assert_eq!(epx.check(System::GameBoy), Ok(()));
+        assert!(epx.check(System::PlayStation).is_err());
+        let unknown = ImageChoices {
+            scaler: Some("xbrz".to_owned()),
+        };
+        assert!(unknown.check(System::GameBoy).is_err());
+        assert_eq!(ImageChoices::default().check(System::PlayStation), Ok(()));
     }
 
     #[test]

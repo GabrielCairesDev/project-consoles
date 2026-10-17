@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 use player::controls::{Bindings, System};
+use player::image::ImageSettings;
 
 use crate::library::Game;
 
@@ -28,12 +29,9 @@ pub const STATE_FLAG: &str = "--state";
 pub const BATTERY_FLAG: &str = "--sav";
 /// Argumento com o BIOS do console (o PlayStation precisa dele).
 pub const BIOS_FLAG: &str = "--bios";
-/// Argumento que desliga a melhoria de imagem (`--enhance off`); sem ele,
-/// ela fica ligada.
-pub const ENHANCE_FLAG: &str = "--enhance";
-/// Valores de [`ENHANCE_FLAG`].
-pub const ENHANCE_ON: &str = "on";
-pub const ENHANCE_OFF: &str = "off";
+/// Argumento com a ampliação do quadro ([`player::image::Scaler::id`]);
+/// sem ele, vale a recomendada do console.
+pub const SCALER_FLAG: &str = "--scaler";
 
 /// Núcleo que roda jogos deste console, se houver.
 pub fn system_for(console_id: &str) -> Option<System> {
@@ -94,8 +92,8 @@ pub struct LaunchOptions {
     pub battery_path: Option<PathBuf>,
     /// BIOS do console, para os que precisam dele.
     pub bios_path: Option<PathBuf>,
-    /// Melhoria de imagem do console ligada.
-    pub enhance: bool,
+    /// Configuração de imagem com que o jogo roda.
+    pub image: ImageSettings,
 }
 
 type CommandBuilder = Box<dyn Fn(&Path, &LaunchOptions) -> io::Result<Command> + Send + Sync>;
@@ -123,7 +121,9 @@ fn play_command(exe: &Path, rom: &Path, options: &LaunchOptions) -> Command {
         .arg(CONSOLE_FLAG)
         .arg(options.bindings.system().id())
         .arg(KEYS_FLAG)
-        .arg(options.bindings.to_arg());
+        .arg(options.bindings.to_arg())
+        .arg(SCALER_FLAG)
+        .arg(options.image.scaler.id());
     if let Some(state) = &options.state_path {
         command.arg(STATE_FLAG).arg(state);
     }
@@ -132,9 +132,6 @@ fn play_command(exe: &Path, rom: &Path, options: &LaunchOptions) -> Command {
     }
     if let Some(bios) = &options.bios_path {
         command.arg(BIOS_FLAG).arg(bios);
-    }
-    if !options.enhance {
-        command.arg(ENHANCE_FLAG).arg(ENHANCE_OFF);
     }
     command
 }
@@ -242,7 +239,7 @@ pub(crate) mod tests {
             state_path: None,
             battery_path: None,
             bios_path: None,
-            enhance: true,
+            image: ImageSettings::recommended(System::MasterSystem),
         }
     }
 
@@ -306,7 +303,9 @@ pub(crate) mod tests {
                 CONSOLE_FLAG,
                 "master-system",
                 KEYS_FLAG,
-                keys.as_str()
+                keys.as_str(),
+                SCALER_FLAG,
+                "epx"
             ]
         );
         let with_state = LaunchOptions {
@@ -323,6 +322,8 @@ pub(crate) mod tests {
                 "master-system",
                 KEYS_FLAG,
                 keys.as_str(),
+                SCALER_FLAG,
+                "epx",
                 STATE_FLAG,
                 "/dados/sonic.state",
                 BATTERY_FLAG,
@@ -340,17 +341,12 @@ pub(crate) mod tests {
             [BIOS_FLAG, "/dados/bios/playstation.bin"]
         );
 
-        // Melhoria de imagem: ligada não passa nada; desligada, `off`.
+        // A ampliação vai sempre explícita, logo depois das teclas.
         let plain = LaunchOptions {
-            enhance: false,
+            image: ImageSettings::ORIGINAL,
             ..options()
         };
-        let plain_args = args(&plain);
-        assert_eq!(
-            plain_args[plain_args.len() - 2..],
-            [ENHANCE_FLAG, ENHANCE_OFF]
-        );
-        assert!(!args(&options()).iter().any(|a| a == ENHANCE_FLAG));
+        assert_eq!(args(&plain)[6..8], [SCALER_FLAG, "nearest"]);
     }
 
     #[test]

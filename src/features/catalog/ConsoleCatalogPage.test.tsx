@@ -22,7 +22,7 @@ const CONSOLES: Console[] = [
     playable: false,
     needsBios: false,
     resumable: true,
-    enhancement: null,
+    image: null,
   },
   {
     id: "game-boy",
@@ -35,7 +35,7 @@ const CONSOLES: Console[] = [
     playable: false,
     needsBios: false,
     resumable: true,
-    enhancement: null,
+    image: null,
   },
   {
     id: "playstation-2",
@@ -48,7 +48,7 @@ const CONSOLES: Console[] = [
     playable: false,
     needsBios: false,
     resumable: true,
-    enhancement: null,
+    image: null,
   },
 ];
 

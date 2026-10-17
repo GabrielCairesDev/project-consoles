@@ -1,40 +1,12 @@
 //! Escala do quadro para a janela, centralizada com barras pretas.
 //!
 //! Sem proporção definida a escala é inteira (pixels nítidos e iguais);
-//! com proporção, o quadro ocupa o maior retângulo dela que cabe. Com a
-//! melhoria de imagem ligada, a ampliação passa por um filtro
-//! ([`Enhancement`]); desligada, é por vizinho mais próximo, pixel a pixel.
+//! com proporção, o quadro ocupa o maior retângulo dela que cabe. A
+//! ampliação segue o [`Scaler`] escolhido; o [`Scaler::Nearest`] é a
+//! imagem original, pixel a pixel.
 
-use crate::controls::System;
 use crate::enhance::{self, Tap};
-
-/// Melhoria de imagem adequada a cada console.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Enhancement {
-    /// Ampliação para pixel art (Scale2x/3x/4x): arredonda contornos sem
-    /// borrar e sem criar cores, nos consoles 2D.
-    PixelArt,
-    /// Suavização bilinear da ampliação: reduz serrilhado e pontilhado das
-    /// imagens 3D.
-    Smooth,
-}
-
-impl Enhancement {
-    pub fn for_system(system: System) -> Self {
-        match system {
-            System::MasterSystem | System::Genesis | System::GameBoy => Self::PixelArt,
-            System::PlayStation => Self::Smooth,
-        }
-    }
-
-    /// Nome estável, para a interface.
-    pub fn id(self) -> &'static str {
-        match self {
-            Self::PixelArt => "pixelArt",
-            Self::Smooth => "smooth",
-        }
-    }
-}
+use crate::image::Scaler;
 
 /// Retângulo de destino do quadro dentro da janela.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,11 +96,11 @@ fn pixel_art_factor(k: usize) -> usize {
     }
 }
 
-/// Desenha os quadros com ou sem melhoria, reaproveitando os buffers
+/// Desenha os quadros com a ampliação escolhida, reaproveitando os buffers
 /// intermediários entre quadros.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Renderer {
-    enhancement: Option<Enhancement>,
+    scaler: Scaler,
     scaled: Vec<u32>,
     pass: Vec<u32>,
     columns: Vec<Tap>,
@@ -136,16 +108,18 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    /// `None`: imagem original, por vizinho mais próximo.
-    pub fn new(enhancement: Option<Enhancement>) -> Self {
+    pub fn new(scaler: Scaler) -> Self {
         Self {
-            enhancement,
-            ..Self::default()
+            scaler,
+            scaled: Vec::new(),
+            pass: Vec::new(),
+            columns: Vec::new(),
+            rows: Vec::new(),
         }
     }
 
     /// Copia `src` (`frame.0 × frame.1`, linhas de `stride` pixels)
-    /// ampliado para `dst` (`window.0` de largura), com a melhoria
+    /// ampliado para `dst` (`window.0` de largura), com a ampliação
     /// escolhida. O resto de `dst` fica preto.
     pub fn draw(
         &mut self,
@@ -161,10 +135,10 @@ impl Renderer {
         if frame.0 == 0 || frame.1 == 0 || rect.width == 0 || rect.height == 0 {
             return;
         }
-        match self.enhancement {
-            None => nearest(src, stride, frame, rect, dst, window),
-            Some(Enhancement::PixelArt) => self.pixel_art(src, stride, frame, rect, dst, window),
-            Some(Enhancement::Smooth) => self.smooth(src, stride, frame, rect, dst, window),
+        match self.scaler {
+            Scaler::Nearest => nearest(src, stride, frame, rect, dst, window),
+            Scaler::Epx => self.pixel_art(src, stride, frame, rect, dst, window),
+            Scaler::Bilinear => self.smooth(src, stride, frame, rect, dst, window),
         }
     }
 
@@ -245,11 +219,11 @@ mod tests {
         dst: &mut [u32],
         window: (usize, usize),
     ) {
-        Renderer::new(None).draw(src, stride, frame, aspect, dst, window);
+        Renderer::new(Scaler::Nearest).draw(src, stride, frame, aspect, dst, window);
     }
 
     fn draw(
-        enhancement: Enhancement,
+        scaler: Scaler,
         src: &[u32],
         stride: usize,
         frame: (usize, usize),
@@ -257,23 +231,8 @@ mod tests {
         window: (usize, usize),
     ) -> Vec<u32> {
         let mut dst = vec![9; window.0 * window.1];
-        Renderer::new(Some(enhancement)).draw(src, stride, frame, aspect, &mut dst, window);
+        Renderer::new(scaler).draw(src, stride, frame, aspect, &mut dst, window);
         dst
-    }
-
-    #[test]
-    fn every_console_has_an_enhancement() {
-        assert_eq!(
-            Enhancement::for_system(System::GameBoy),
-            Enhancement::PixelArt
-        );
-        assert_eq!(
-            Enhancement::for_system(System::PlayStation),
-            Enhancement::Smooth
-        );
-        for system in System::ALL {
-            assert!(!Enhancement::for_system(system).id().is_empty());
-        }
     }
 
     #[test]
@@ -286,7 +245,7 @@ mod tests {
     fn pixel_art_uses_scale2x_and_letterboxes() {
         // Diagonal 2×2 (stride 3) em janela 6×4: escala 2, centralizada.
         let src = [1, 0, 7, 0, 1, 7];
-        let dst = draw(Enhancement::PixelArt, &src, 3, (2, 2), None, (6, 4));
+        let dst = draw(Scaler::Epx, &src, 3, (2, 2), None, (6, 4));
         let mut scaled = [0; 16];
         enhance::scale2x(&src, 3, (2, 2), &mut scaled);
         for (row, line) in dst.as_chunks::<6>().0.iter().enumerate() {
@@ -299,7 +258,7 @@ mod tests {
     #[test]
     fn pixel_art_at_scale_4_applies_scale2x_twice() {
         let src = [1, 0, 0, 1];
-        let dst = draw(Enhancement::PixelArt, &src, 2, (2, 2), None, (8, 8));
+        let dst = draw(Scaler::Epx, &src, 2, (2, 2), None, (8, 8));
         let mut twice = [0; 16];
         enhance::scale2x(&src, 2, (2, 2), &mut twice);
         let mut expected = [0; 64];
@@ -310,15 +269,15 @@ mod tests {
     #[test]
     fn enhancements_keep_flat_images_and_unscaled_frames() {
         let flat = [0x123456; 12];
-        for enhancement in [Enhancement::PixelArt, Enhancement::Smooth] {
-            let dst = draw(enhancement, &flat, 4, (4, 3), None, (12, 9));
-            assert_eq!(dst, vec![0x123456; 108], "{enhancement:?}");
+        for scaler in [Scaler::Epx, Scaler::Bilinear] {
+            let dst = draw(scaler, &flat, 4, (4, 3), None, (12, 9));
+            assert_eq!(dst, vec![0x123456; 108], "{scaler:?}");
         }
         // Na escala 1 (ou cortado), ambos mostram o original.
         let src = [1, 2, 3, 4];
-        for enhancement in [Enhancement::PixelArt, Enhancement::Smooth] {
-            assert_eq!(draw(enhancement, &src, 2, (2, 2), None, (2, 2)), src);
-            assert_eq!(draw(enhancement, &src, 2, (2, 2), None, (1, 1)), [1]);
+        for scaler in [Scaler::Epx, Scaler::Bilinear] {
+            assert_eq!(draw(scaler, &src, 2, (2, 2), None, (2, 2)), src);
+            assert_eq!(draw(scaler, &src, 2, (2, 2), None, (1, 1)), [1]);
         }
     }
 
@@ -326,7 +285,7 @@ mod tests {
     fn smooth_interpolates_inside_and_keeps_the_edges() {
         // 2×1 esticado para 4×3 (proporção 4:3).
         let src = [0x000000, 0x0000FF];
-        let dst = draw(Enhancement::Smooth, &src, 2, (2, 1), Some((4, 3)), (4, 3));
+        let dst = draw(Scaler::Bilinear, &src, 2, (2, 1), Some((4, 3)), (4, 3));
         for line in dst.as_chunks::<4>().0 {
             assert_eq!(*line, [0x00, 0x3F, 0xBF, 0xFF]);
         }
@@ -335,7 +294,7 @@ mod tests {
     #[test]
     fn smooth_mixes_rows_and_crops_to_the_window() {
         let src = [0x000000, 0x0000FF];
-        let dst = draw(Enhancement::Smooth, &src, 1, (1, 2), Some((1, 4)), (1, 4));
+        let dst = draw(Scaler::Bilinear, &src, 1, (1, 2), Some((1, 4)), (1, 4));
         assert_eq!(dst, [0x00, 0x3F, 0xBF, 0xFF]);
     }
 
