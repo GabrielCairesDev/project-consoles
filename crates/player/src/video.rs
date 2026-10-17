@@ -8,7 +8,7 @@
 //! imagem original, pixel a pixel.
 
 use crate::enhance::{self, Tap};
-use crate::image::{AspectRatio, Fit, ImageSettings, Scaler};
+use crate::image::{AspectRatio, Fit, FrameBlend, ImageSettings, Scaler, ScreenEffect, Signal};
 use crate::mmpx;
 
 /// Tons que o núcleo do Game Boy desenha; a [`Palette`](crate::image::Palette) os substitui.
@@ -133,9 +133,20 @@ pub struct Renderer {
     scaler: Scaler,
     aspect: AspectRatio,
     fit: Fit,
+    screen: ScreenEffect,
+    signal: Signal,
+    blend: FrameBlend,
     /// Tons que substituem os do núcleo, se a paleta não for a dele.
     shades: Option<[u32; 4]>,
     colored: Vec<u32>,
+    /// Quadro emulado anterior (sem cor aplicada), para o rastro do LCD.
+    previous: Vec<u32>,
+    previous_size: (usize, usize),
+    previous_colored: Vec<u32>,
+    filtered: Vec<u32>,
+    /// Fatores da etapa de tela por linha e por coluna da área visível.
+    screen_rows: Vec<u32>,
+    screen_columns: Vec<[u32; 3]>,
     scaled: Vec<u32>,
     pass: Vec<u32>,
     columns: Vec<Tap>,
@@ -148,13 +159,37 @@ impl Renderer {
             scaler: image.scaler,
             aspect: image.aspect,
             fit: image.fit,
+            screen: image.screen,
+            signal: image.signal,
+            blend: image.blend,
             shades: image.palette.shades(),
             colored: Vec::new(),
+            previous: Vec::new(),
+            previous_size: (0, 0),
+            previous_colored: Vec::new(),
+            filtered: Vec::new(),
+            screen_rows: Vec::new(),
+            screen_columns: Vec::new(),
             scaled: Vec::new(),
             pass: Vec::new(),
             columns: Vec::new(),
             rows: Vec::new(),
         }
+    }
+
+    /// Guarda o quadro que está na tela antes de o núcleo emular o próximo,
+    /// para o rastro do LCD. Chamado a cada quadro emulado (não a cada
+    /// desenho): redesenhar sem quadro novo não muda o resultado, e quadros
+    /// emulados sem desenho entre eles não quebram a sequência.
+    pub fn keep_previous(&mut self, src: &[u32], stride: usize, (w, h): (usize, usize)) {
+        if self.blend == FrameBlend::Off {
+            return;
+        }
+        self.previous.clear();
+        for row in src.chunks(stride).take(h) {
+            self.previous.extend_from_slice(&row[..w]);
+        }
+        self.previous_size = (w, h);
     }
 
     /// `tv_aspect` é a proporção da TV do console (se houver), usada quando
@@ -186,17 +221,51 @@ impl Renderer {
             return;
         }
         clear_bars(dst, window, rect);
-        // Etapa de cor: o quadro recolorido vira a origem da ampliação. O
-        // buffer sai de `self` durante o desenho e volta depois, para ser
-        // reaproveitado no próximo quadro.
+        // Etapas antes da ampliação (cor, rastro, sinal), cada uma gerando a
+        // origem da seguinte. Os buffers saem de `self` durante o desenho e
+        // voltam depois, para serem reaproveitados no próximo quadro.
         let mut colored = std::mem::take(&mut self.colored);
-        let (src, stride) = match &self.shades {
-            Some(shades) => {
-                enhance::recolor(src, stride, frame, &CORE_SHADES, shades, &mut colored);
-                (colored.as_slice(), frame.0)
+        let mut filtered = std::mem::take(&mut self.filtered);
+        // `colored` guarda o quadro quando cor ou rastro precisam mudá-lo;
+        // senão, a origem continua sendo o quadro do núcleo.
+        let mut in_colored = false;
+        if let Some(shades) = &self.shades {
+            enhance::recolor(src, stride, frame, &CORE_SHADES, shades, &mut colored);
+            in_colored = true;
+        }
+        if self.blend == FrameBlend::On && self.previous_size == frame {
+            if !in_colored {
+                colored.clear();
+                for row in src.chunks(stride).take(frame.1) {
+                    colored.extend_from_slice(&row[..frame.0]);
+                }
+                in_colored = true;
             }
-            None => (src, stride),
+            let previous = match &self.shades {
+                Some(shades) => {
+                    enhance::recolor(
+                        &self.previous,
+                        frame.0,
+                        frame,
+                        &CORE_SHADES,
+                        shades,
+                        &mut self.previous_colored,
+                    );
+                    &self.previous_colored
+                }
+                None => &self.previous,
+            };
+            enhance::blend_frames(&mut colored, previous);
+        }
+        let (mut src, mut stride) = if in_colored {
+            (colored.as_slice(), frame.0)
+        } else {
+            (src, stride)
         };
+        if self.signal == Signal::Composite {
+            enhance::composite(src, stride, frame, &mut filtered);
+            (src, stride) = (filtered.as_slice(), frame.0);
+        }
         match self.scaler {
             Scaler::Nearest => nearest(src, stride, frame, rect, dst, window),
             Scaler::Epx => self.pixel_art(src, stride, frame, rect, dst, window),
@@ -213,6 +282,91 @@ impl Renderer {
             }
         }
         self.colored = colored;
+        self.filtered = filtered;
+        self.apply_screen(frame, rect, dst, window);
+    }
+
+    /// Etapa de tela, depois da ampliação. Só age com espaço para o efeito:
+    /// scanlines e CRT a partir de 2× na vertical, grade de LCD a partir de
+    /// 3×; abaixo disso, a imagem fica como está.
+    fn apply_screen(
+        &mut self,
+        frame: (usize, usize),
+        rect: Layout,
+        dst: &mut [u32],
+        window: (usize, usize),
+    ) {
+        // Fração 1/256 de 1: escurecimento das scanlines, da máscara e das
+        // divisões do LCD.
+        const SCANLINE: u32 = 166;
+        const MASK: u32 = 192;
+        const GRID: u32 = 192;
+        let (visible_w, visible_h) = visible(rect, window);
+        let area = (rect.x, rect.y, visible_w, visible_h);
+        // Linha (ou coluna) `i` de `out` amostra esta linha de origem, como o
+        // vizinho mais próximo.
+        let source = |i: usize, len: usize, out: usize| (2 * i + 1) * len / (2 * out);
+        match self.screen {
+            ScreenEffect::None => {}
+            ScreenEffect::Scanlines | ScreenEffect::Crt => {
+                if rect.height < 2 * frame.1 {
+                    return;
+                }
+                self.screen_rows.clear();
+                self.screen_rows.extend((0..visible_h).map(|row| {
+                    // Metade de baixo de cada linha do console fica escura.
+                    let within = (2 * row + 1) * frame.1 * 256 / (2 * rect.height) % 256;
+                    if within > 128 { SCANLINE } else { 256 }
+                }));
+                let columns = if self.screen == ScreenEffect::Crt {
+                    self.screen_columns.clear();
+                    self.screen_columns.extend((0..visible_w).map(|column| {
+                        match (rect.x + column) % 3 {
+                            0 => [256, MASK, MASK],
+                            1 => [MASK, 256, MASK],
+                            _ => [MASK, MASK, 256],
+                        }
+                    }));
+                    Some(self.screen_columns.as_slice())
+                } else {
+                    None
+                };
+                enhance::shade(dst, window.0, area, &self.screen_rows, columns);
+            }
+            ScreenEffect::LcdGrid => {
+                if rect.width < 3 * frame.0 || rect.height < 3 * frame.1 {
+                    return;
+                }
+                // A última linha e a última coluna de cada pixel do console
+                // viram a divisão entre os pixels da tela.
+                let gap = |i: usize, len: usize, out: usize| {
+                    i + 1 == out || source(i, len, out) != source(i + 1, len, out)
+                };
+                self.screen_rows.clear();
+                self.screen_rows.extend((0..visible_h).map(|row| {
+                    if gap(row, frame.1, rect.height) {
+                        GRID
+                    } else {
+                        256
+                    }
+                }));
+                self.screen_columns.clear();
+                self.screen_columns.extend((0..visible_w).map(|column| {
+                    [if gap(column, frame.0, rect.width) {
+                        GRID
+                    } else {
+                        256
+                    }; 3]
+                }));
+                enhance::shade(
+                    dst,
+                    window.0,
+                    area,
+                    &self.screen_rows,
+                    Some(&self.screen_columns),
+                );
+            }
+        }
     }
 
     fn pixel_art(
@@ -444,6 +598,107 @@ mod tests {
         assert_eq!(dst.iter().filter(|&&px| px == 0x112233).count(), 36);
     }
 
+    /// Renderer com uma configuração de 2D em escala inteira, só com as
+    /// mudanças de `change`.
+    fn with(change: impl FnOnce(&mut ImageSettings)) -> Renderer {
+        let mut image = ImageSettings::original(crate::controls::System::MasterSystem);
+        change(&mut image);
+        Renderer::new(image)
+    }
+
+    #[test]
+    fn scanlines_darken_the_lower_half_of_each_line_from_2x() {
+        let src = [0xFFFFFF; 4];
+        let mut dst = vec![0; 4 * 8];
+        with(|i| i.screen = ScreenEffect::Scanlines).draw(&src, 2, (2, 2), None, &mut dst, (4, 8));
+        // 2×2 em 4×8: escala 2 (4×4 centralizado na vertical, linhas 2..6).
+        let rows: Vec<u32> = dst.chunks(4).map(|row| row[0]).collect();
+        assert_eq!(rows, [0, 0, 0xFFFFFF, 0xA5A5A5, 0xFFFFFF, 0xA5A5A5, 0, 0]);
+        // Em 1× não há espaço: imagem intacta.
+        let mut small = vec![0; 4];
+        with(|i| i.screen = ScreenEffect::Scanlines).draw(
+            &src,
+            2,
+            (2, 2),
+            None,
+            &mut small,
+            (2, 2),
+        );
+        assert_eq!(small, src);
+    }
+
+    #[test]
+    fn crt_adds_an_rgb_aperture_mask() {
+        let src = [0xFFFFFF; 3];
+        let mut dst = vec![0; 6 * 2];
+        with(|i| i.screen = ScreenEffect::Crt).draw(&src, 3, (3, 1), None, &mut dst, (6, 2));
+        assert_eq!(dst[..3], [0xFFBFBF, 0xBFFFBF, 0xBFBFFF]);
+        // Linha de scanline: máscara × scanline (166 no canal da coluna,
+        // 192 × 166 / 256 = 124 nos outros).
+        assert_eq!(dst[6..9], [0xA57B7B, 0x7BA57B, 0x7B7BA5]);
+    }
+
+    #[test]
+    fn lcd_grid_marks_the_edges_of_each_pixel_from_3x() {
+        let src = [0xFFFFFF; 4];
+        let mut dst = vec![0; 6 * 6];
+        let mut renderer = with(|i| i.screen = ScreenEffect::LcdGrid);
+        renderer.draw(&src, 2, (2, 2), None, &mut dst, (6, 6));
+        let grid = 0xBFBFBF;
+        let corner = 0x8F8F8F;
+        assert_eq!(
+            dst[..6],
+            [0xFFFFFF, 0xFFFFFF, grid, 0xFFFFFF, 0xFFFFFF, grid]
+        );
+        assert_eq!(dst[12..18], [grid, grid, corner, grid, grid, corner]);
+        // Em 2× a grade comeria metade da imagem: não é aplicada.
+        let mut dst = vec![0; 16];
+        renderer.draw(&src, 2, (2, 2), None, &mut dst, (4, 4));
+        assert_eq!(dst, [0xFFFFFF; 16]);
+    }
+
+    #[test]
+    fn composite_fuses_dithering_before_scaling() {
+        let src = [0xFFFFFF, 0, 0xFFFFFF, 0];
+        let mut dst = vec![0; 4];
+        with(|i| i.signal = Signal::Composite).draw(&src, 4, (4, 1), None, &mut dst, (4, 1));
+        assert_eq!(dst[1..3], [0x7F7F7F, 0x7F7F7F]);
+    }
+
+    #[test]
+    fn frame_blend_mixes_with_the_frame_kept_before_emulating() {
+        let mut renderer = with(|i| i.blend = FrameBlend::On);
+        let mut dst = vec![0; 1];
+        // Sem quadro anterior guardado: o atual, puro.
+        renderer.draw(&[0xFF0000], 1, (1, 1), None, &mut dst, (1, 1));
+        assert_eq!(dst, [0xFF0000]);
+        renderer.keep_previous(&[0xFF0000], 1, (1, 1));
+        renderer.draw(&[0x0000FF], 1, (1, 1), None, &mut dst, (1, 1));
+        assert_eq!(dst, [0x7F007F]);
+        // Redesenhar sem quadro novo dá o mesmo resultado.
+        renderer.draw(&[0x0000FF], 1, (1, 1), None, &mut dst, (1, 1));
+        assert_eq!(dst, [0x7F007F]);
+        // Desligado, nada é guardado nem misturado.
+        let mut off = with(|_| {});
+        off.keep_previous(&[0xFF0000], 1, (1, 1));
+        off.draw(&[0x0000FF], 1, (1, 1), None, &mut dst, (1, 1));
+        assert_eq!(dst, [0x0000FF]);
+    }
+
+    #[test]
+    fn frame_blend_recolors_both_frames_with_the_palette() {
+        use crate::image::Palette;
+        let mut renderer = with(|i| {
+            i.palette = Palette::Dmg;
+            i.blend = FrameBlend::On;
+        });
+        let shades = Palette::Dmg.shades().expect("tons");
+        renderer.keep_previous(&[CORE_SHADES[0]], 1, (1, 1));
+        let mut dst = vec![0; 1];
+        renderer.draw(&[CORE_SHADES[3]], 1, (1, 1), None, &mut dst, (1, 1));
+        assert_eq!(dst, [enhance::lerp(shades[3], shades[0], 128)]);
+    }
+
     #[test]
     fn every_pixel_is_written_whatever_was_in_the_window() {
         // Pintar só as barras exige que os filtros escrevam todo o retângulo:
@@ -455,11 +710,21 @@ mod tests {
         let aspects = [None, Some((4, 3)), Some((1, 3))];
         let choices = Scaler::ALL.into_iter().flat_map(|scaler| {
             AspectRatio::ALL.into_iter().flat_map(move |aspect| {
-                Fit::ALL.into_iter().map(move |fit| ImageSettings {
-                    scaler,
-                    aspect,
-                    fit,
-                    ..ImageSettings::original(crate::controls::System::MasterSystem)
+                Fit::ALL.into_iter().flat_map(move |fit| {
+                    ScreenEffect::ALL
+                        .into_iter()
+                        .map(move |screen| ImageSettings {
+                            scaler,
+                            aspect,
+                            fit,
+                            screen,
+                            signal: if screen == ScreenEffect::Crt {
+                                Signal::Composite
+                            } else {
+                                Signal::Rgb
+                            },
+                            ..ImageSettings::original(crate::controls::System::MasterSystem)
+                        })
                 })
             })
         });
@@ -783,21 +1048,85 @@ mod tests {
                 },
                 Some((4, 3)),
             ),
+            (
+                "SMS epx + scanlines",
+                (256, 192),
+                frame(256, 192, &rgb),
+                ImageSettings {
+                    scaler: Scaler::Epx,
+                    screen: ScreenEffect::Scanlines,
+                    ..ImageSettings::original(crate::controls::System::MasterSystem)
+                },
+                None,
+            ),
+            (
+                "SMS composto+epx+CRT",
+                (256, 192),
+                frame(256, 192, &rgb),
+                ImageSettings {
+                    scaler: Scaler::Epx,
+                    screen: ScreenEffect::Crt,
+                    signal: Signal::Composite,
+                    ..ImageSettings::original(crate::controls::System::MasterSystem)
+                },
+                None,
+            ),
+            (
+                "SMS pior: composto+mmpx+CRT",
+                (256, 192),
+                frame(256, 192, &rgb),
+                ImageSettings {
+                    scaler: Scaler::Mmpx,
+                    screen: ScreenEffect::Crt,
+                    signal: Signal::Composite,
+                    ..ImageSettings::original(crate::controls::System::MasterSystem)
+                },
+                None,
+            ),
+            (
+                "GB tudo (paleta+rastro+grade)",
+                (160, 144),
+                frame(160, 144, &CORE_SHADES),
+                ImageSettings {
+                    palette: Palette::Dmg,
+                    scaler: Scaler::Epx,
+                    screen: ScreenEffect::LcdGrid,
+                    blend: FrameBlend::On,
+                    ..ImageSettings::original(crate::controls::System::GameBoy)
+                },
+                None,
+            ),
+            (
+                "PS1 composto+bilinear+CRT",
+                (640, 480),
+                frame(640, 480, &rgb),
+                ImageSettings {
+                    scaler: Scaler::Bilinear,
+                    screen: ScreenEffect::Crt,
+                    signal: Signal::Composite,
+                    ..ImageSettings::original(crate::controls::System::PlayStation)
+                },
+                Some((4, 3)),
+            ),
         ];
         let mut dst = vec![0; WINDOW.0 * WINDOW.1];
         for (name, size, src, image, aspect) in cases {
+            let presentation = legacy(image.scaler, aspect);
             let mut renderer = Renderer::new(ImageSettings {
-                palette: image.palette,
-                ..legacy(image.scaler, aspect)
+                aspect: presentation.aspect,
+                fit: presentation.fit,
+                ..image
             });
             renderer.draw(&src, size.0, size, aspect, &mut dst, WINDOW);
             let start = Instant::now();
             for _ in 0..FRAMES {
+                // Como no jogo: o quadro anterior é guardado a cada quadro.
+                renderer.keep_previous(&src, size.0, size);
                 renderer.draw(black_box(&src), size.0, size, aspect, &mut dst, WINDOW);
                 black_box(&dst);
             }
             let ms = start.elapsed().as_secs_f64() * 1000.0 / f64::from(FRAMES);
-            println!("{name:<26} {ms:>6.2} ms/quadro");
+            println!("{name:<30} {ms:>6.2} ms/quadro");
         }
     }
 }

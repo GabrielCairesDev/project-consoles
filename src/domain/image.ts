@@ -15,12 +15,24 @@ export type AspectRatio = "square" | "tv";
 /** Encaixe na janela; espelha `player::image::Fit::id`. */
 export type Fit = "integer" | "fill";
 
+/** Efeito de tela; espelha `player::image::ScreenEffect::id`. */
+export type ScreenEffect = "none" | "scanlines" | "crt" | "lcd-grid";
+
+/** Sinal de vídeo; espelha `player::image::Signal::id`. */
+export type Signal = "rgb" | "composite";
+
+/** Rastro do LCD; espelha `player::image::FrameBlend::id`. */
+export type FrameBlend = "off" | "on";
+
 /** Escolhas de imagem, uma por técnica; espelha `settings::ImageChoices`. */
 export interface ImageChoices {
   palette?: Palette;
   scaler?: Scaler;
   aspect?: AspectRatio;
   fit?: Fit;
+  screen?: ScreenEffect;
+  signal?: Signal;
+  blend?: FrameBlend;
 }
 
 /** O que o console oferece em imagem; espelha `commands::ImageInfo`. */
@@ -33,6 +45,12 @@ export interface ImageInfo {
   aspects: AspectRatio[];
   /** Encaixes na janela. */
   fits: Fit[];
+  /** Efeitos de tela do console. */
+  screens: ScreenEffect[];
+  /** Sinais de vídeo do console. */
+  signals: Signal[];
+  /** Rastro do LCD (só portáteis). */
+  blends: FrameBlend[];
   /** Preset Original: pixel a pixel, na apresentação de sempre do console. */
   original: ImageChoices;
   /** Preset Recomendado do console (o padrão). */
@@ -42,7 +60,7 @@ export interface ImageInfo {
 export type ImagePreset = "original" | "recommended" | "custom";
 
 /** Técnicas de imagem, na ordem do pipeline; cresce com o catálogo. */
-const TECHNIQUES = ["palette", "scaler", "aspect", "fit"] as const satisfies readonly (keyof ImageChoices)[];
+const TECHNIQUES = ["palette", "signal", "blend", "scaler", "screen", "aspect", "fit"] as const satisfies readonly (keyof ImageChoices)[];
 
 export function sameChoices(a: ImageChoices, b: ImageChoices): boolean {
   return TECHNIQUES.every((technique) => a[technique] === b[technique]);

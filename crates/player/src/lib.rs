@@ -310,6 +310,10 @@ impl App {
     }
 
     fn run_frame(&mut self) {
+        // O quadro que sai da tela vira o "anterior" do rastro do LCD.
+        let frame = self.machine.frame();
+        self.renderer
+            .keep_previous(frame.pixels, frame.stride, frame.size);
         self.machine.run_frame();
         // O PlayStation troca entre NTSC e PAL conforme o jogo.
         self.frame_duration = Duration::from_secs_f64(1.0 / self.machine.frame_rate());

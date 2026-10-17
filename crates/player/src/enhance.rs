@@ -203,6 +203,71 @@ pub fn resample_row(src: &[u32], columns: &[Tap], out: &mut [u32]) {
     }
 }
 
+/// Média de dois quadros do mesmo tamanho, canal a canal (frame blending:
+/// o rastro do LCD dos portáteis). Escreve em `current`.
+pub fn blend_frames(current: &mut [u32], previous: &[u32]) {
+    for (px, &old) in current.iter_mut().zip(previous) {
+        *px = lerp(*px, old, 128);
+    }
+}
+
+/// Sinal composto simplificado: cada pixel mistura 1-2-1 com os vizinhos da
+/// linha, como a banda estreita do vídeo composto. Funde o pontilhado de
+/// colunas alternadas (transparência dos jogos da época) numa cor só.
+/// Copia `frame` de `src` (linhas de `stride`) para `dst`, contíguo.
+pub fn composite(src: &[u32], stride: usize, (w, h): (usize, usize), dst: &mut Vec<u32>) {
+    dst.clear();
+    for row in src.chunks(stride).take(h) {
+        let row = &row[..w];
+        dst.extend((0..w).map(|x| {
+            let left = row[x.saturating_sub(1)];
+            let right = row[(x + 1).min(w - 1)];
+            // (left + 2·centro + right) / 4 = média de (média dos vizinhos) e centro.
+            lerp(row[x], lerp(left, right, 128), 128)
+        }));
+    }
+}
+
+/// Escurece `px` pelos fatores de cada canal (256 = sem mudança).
+#[inline]
+fn shade_px(px: u32, [r, g, b]: [u32; 3]) -> u32 {
+    let red = (((px >> 16) & 0xFF) * r) >> 8;
+    let green = (((px >> 8) & 0xFF) * g) >> 8;
+    let blue = ((px & 0xFF) * b) >> 8;
+    (red << 16) | (green << 8) | blue
+}
+
+/// Aplica a etapa de tela na parte visível do quadro já ampliado: cada
+/// linha de `dst` dentro de `area` (`x`, `y`, largura, altura) é escurecida
+/// pelo fator da linha (`rows`, 256 = sem mudança) e, se houver, pelos
+/// fatores por canal da coluna (`columns`).
+pub fn shade(
+    dst: &mut [u32],
+    window_width: usize,
+    (x, y, width, height): (usize, usize, usize, usize),
+    rows: &[u32],
+    columns: Option<&[[u32; 3]]>,
+) {
+    for (row, &factor) in rows.iter().enumerate().take(height) {
+        let start = (y + row) * window_width + x;
+        let line = &mut dst[start..start + width];
+        match columns {
+            None if factor == 256 => {}
+            None => {
+                for px in line {
+                    *px = shade_px(*px, [factor; 3]);
+                }
+            }
+            Some(columns) => {
+                for (px, column) in line.iter_mut().zip(columns) {
+                    let mixed = column.map(|c| (c * factor) >> 8);
+                    *px = shade_px(*px, mixed);
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,6 +426,42 @@ mod tests {
         // Reaproveita o buffer sem sobras do quadro anterior.
         recolor(&[30], 1, (1, 1), &from, &to, &mut dst);
         assert_eq!(dst, [3]);
+    }
+
+    #[test]
+    fn blend_frames_averages_each_channel() {
+        let mut current = [0x00FF_0000, 0x0000_0000];
+        blend_frames(&mut current, &[0x0000_00FF, 0x00FF_FFFF]);
+        assert_eq!(current, [0x007F_007F, 0x007F_7F7F]);
+    }
+
+    #[test]
+    fn composite_fuses_column_dithering_and_keeps_flat_areas() {
+        // Pontilhado de colunas alternadas vira uma cor só no meio da linha.
+        let src = [X, O, X, O, X, O];
+        let mut dst = Vec::new();
+        composite(&src, 6, (6, 1), &mut dst);
+        assert_eq!(dst[1..5], [0x7F_7F7F; 4]);
+        // Área lisa não muda; a folga do stride não é lida.
+        composite(
+            &[0x123456, 0x123456, 7, 0x123456, 0x123456, 7],
+            3,
+            (2, 2),
+            &mut dst,
+        );
+        assert_eq!(dst, [0x123456; 4]);
+    }
+
+    #[test]
+    fn shade_darkens_rows_and_columns_inside_the_area() {
+        // Janela 4×2; área 2×2 a partir de x = 1.
+        let mut dst = [X; 8];
+        shade(&mut dst, 4, (1, 0, 2, 2), &[256, 128], None);
+        assert_eq!(dst, [X, X, X, X, X, 0x7F_7F7F, 0x7F_7F7F, X]);
+        let mut dst = [X; 4];
+        let mask = [[256, 128, 128], [128, 256, 128]];
+        shade(&mut dst, 2, (0, 0, 2, 2), &[256, 256], Some(&mask));
+        assert_eq!(dst, [0xFF_7F7F, 0x7F_FF7F, 0xFF_7F7F, 0x7F_FF7F]);
     }
 
     #[test]

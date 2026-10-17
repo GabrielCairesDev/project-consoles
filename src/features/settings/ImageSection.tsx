@@ -5,6 +5,9 @@ import { type Choice, ChoiceGroup } from "../../components/ChoiceGroup";
 import {
   type AspectRatio,
   type Fit,
+  type FrameBlend,
+  type ScreenEffect,
+  type Signal,
   type ImageChoices,
   type ImageInfo,
   type ImagePreset,
@@ -88,6 +91,43 @@ const FIT_CHOICE: Record<Fit, Omit<Choice<Fit>, "value">> = {
   },
 };
 
+/** Simulação da tela. */
+const SCREEN_CHOICE: Record<ScreenEffect, Omit<Choice<ScreenEffect>, "value">> = {
+  none: { label: "Nenhum", description: "A imagem sem simular a tela." },
+  scanlines: {
+    label: "Scanlines",
+    description: "Linhas escuras entre as linhas do console, como numa TV de tubo.",
+  },
+  crt: {
+    label: "TV de tubo",
+    description: "Scanlines e a grade de fósforo vermelho, verde e azul de um tubo de imagem.",
+  },
+  "lcd-grid": {
+    label: "Grade do LCD",
+    description: "As divisões finas entre os pixels da tela do portátil.",
+  },
+};
+
+/** Sinal de vídeo simulado. */
+const SIGNAL_CHOICE: Record<Signal, Omit<Choice<Signal>, "value">> = {
+  rgb: { label: "RGB", description: "Imagem limpa, como num cabo RGB." },
+  composite: {
+    label: "Composto",
+    description:
+      "Mistura levemente os pixels vizinhos, transformando o pontilhado dos jogos em transparência, como numa TV comum.",
+  },
+};
+
+/** Rastro do LCD. */
+const BLEND_CHOICE: Record<FrameBlend, Omit<Choice<FrameBlend>, "value">> = {
+  off: { label: "Desligado", description: "Cada quadro aparece sozinho." },
+  on: {
+    label: "Ligado",
+    description:
+      "Mistura cada quadro com o anterior, como a tela lenta do portátil: efeitos que piscam viram transparência.",
+  },
+};
+
 const PRESET_CHOICES: Choice<ImagePreset>[] = [
   { value: "original", label: "Original" },
   { value: "recommended", label: "Recomendado" },
@@ -141,6 +181,33 @@ export function ImageSection({ image, choices, disabled, onChange }: ImageSectio
           value={choices.scaler ?? null}
           disabled={disabled}
           onChange={(scaler) => onChange({ ...choices, scaler })}
+        />
+      )}
+      {image.signals.length > 1 && (
+        <ChoiceGroup
+          label="Sinal de vídeo"
+          choices={image.signals.map((value) => ({ value, ...SIGNAL_CHOICE[value] }))}
+          value={choices.signal ?? null}
+          disabled={disabled}
+          onChange={(signal) => onChange({ ...choices, signal })}
+        />
+      )}
+      {image.blends.length > 1 && (
+        <ChoiceGroup
+          label="Rastro do LCD"
+          choices={image.blends.map((value) => ({ value, ...BLEND_CHOICE[value] }))}
+          value={choices.blend ?? null}
+          disabled={disabled}
+          onChange={(blend) => onChange({ ...choices, blend })}
+        />
+      )}
+      {image.screens.length > 1 && (
+        <ChoiceGroup
+          label="Efeito de tela"
+          choices={image.screens.map((value) => ({ value, ...SCREEN_CHOICE[value] }))}
+          value={choices.screen ?? null}
+          disabled={disabled}
+          onChange={(screen) => onChange({ ...choices, screen })}
         />
       )}
       {image.aspects.length > 1 && (

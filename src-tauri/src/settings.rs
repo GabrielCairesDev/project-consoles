@@ -6,7 +6,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use player::controls::{BindingError, Bindings, System};
-use player::image::{AspectRatio, Fit, ImageSettings, Palette, Scaler};
+use player::image::{
+    AspectRatio, Fit, FrameBlend, ImageSettings, Palette, Scaler, ScreenEffect, Signal,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,6 +90,12 @@ pub struct ImageChoices {
     pub aspect: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub screen: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blend: Option<String>,
 }
 
 impl From<ImageSettings> for ImageChoices {
@@ -97,6 +105,9 @@ impl From<ImageSettings> for ImageChoices {
             scaler: Some(image.scaler.id().to_owned()),
             aspect: Some(image.aspect.id().to_owned()),
             fit: Some(image.fit.id().to_owned()),
+            screen: Some(image.screen.id().to_owned()),
+            signal: Some(image.signal.id().to_owned()),
+            blend: Some(image.blend.id().to_owned()),
         }
     }
 }
@@ -131,6 +142,24 @@ const FIT: Technique<Fit> = Technique {
     name: "o encaixe",
     from_id: Fit::from_id,
     available: Fit::available,
+};
+
+const SCREEN: Technique<ScreenEffect> = Technique {
+    name: "o efeito de tela",
+    from_id: ScreenEffect::from_id,
+    available: ScreenEffect::available,
+};
+
+const SIGNAL: Technique<Signal> = Technique {
+    name: "o sinal de vídeo",
+    from_id: Signal::from_id,
+    available: Signal::available,
+};
+
+const BLEND: Technique<FrameBlend> = Technique {
+    name: "o rastro do LCD",
+    from_id: FrameBlend::from_id,
+    available: FrameBlend::available,
 };
 
 impl<T: Copy + PartialEq> Technique<T> {
@@ -188,6 +217,9 @@ impl ImageChoices {
             scaler: SCALER.resolve(system, self.scaler.as_deref(), recommended.scaler),
             aspect: ASPECT.resolve(system, self.aspect.as_deref(), recommended.aspect),
             fit: FIT.resolve(system, self.fit.as_deref(), recommended.fit),
+            screen: SCREEN.resolve(system, self.screen.as_deref(), recommended.screen),
+            signal: SIGNAL.resolve(system, self.signal.as_deref(), recommended.signal),
+            blend: BLEND.resolve(system, self.blend.as_deref(), recommended.blend),
         }
     }
 
@@ -197,7 +229,10 @@ impl ImageChoices {
         PALETTE.check(system, self.palette.as_deref())?;
         SCALER.check(system, self.scaler.as_deref())?;
         ASPECT.check(system, self.aspect.as_deref())?;
-        FIT.check(system, self.fit.as_deref())
+        FIT.check(system, self.fit.as_deref())?;
+        SCREEN.check(system, self.screen.as_deref())?;
+        SIGNAL.check(system, self.signal.as_deref())?;
+        BLEND.check(system, self.blend.as_deref())
     }
 }
 
@@ -447,6 +482,21 @@ mod tests {
             tv.check(System::GameBoy),
             Err("A proporção \"tv\" não existe para este console.".to_owned())
         );
+        let crt_on_gb = ImageChoices {
+            screen: Some("crt".to_owned()),
+            ..ImageChoices::default()
+        };
+        assert_eq!(
+            crt_on_gb.check(System::GameBoy),
+            Err("O efeito de tela \"crt\" não existe para este console.".to_owned())
+        );
+        let ghosting = ImageChoices {
+            screen: Some("lcd-grid".to_owned()),
+            blend: Some("on".to_owned()),
+            ..ImageChoices::default()
+        };
+        assert_eq!(ghosting.check(System::GameBoy), Ok(()));
+        assert!(ghosting.check(System::Genesis).is_err());
         let stretched = ImageChoices {
             fit: Some("stretch".to_owned()),
             ..ImageChoices::default()

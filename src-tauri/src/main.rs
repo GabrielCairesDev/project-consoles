@@ -6,10 +6,12 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use player::controls::{Bindings, System};
-use player::image::{AspectRatio, Fit, ImageSettings, Palette, Scaler};
+use player::image::{
+    AspectRatio, Fit, FrameBlend, ImageSettings, Palette, Scaler, ScreenEffect, Signal,
+};
 use project_consoles_lib::runtime::{
-    ASPECT_FLAG, BATTERY_FLAG, BIOS_FLAG, CONSOLE_FLAG, FIT_FLAG, KEYS_FLAG, PALETTE_FLAG,
-    PLAY_FLAG, SCALER_FLAG, STATE_FLAG,
+    ASPECT_FLAG, BATTERY_FLAG, BIOS_FLAG, BLEND_FLAG, CONSOLE_FLAG, FIT_FLAG, KEYS_FLAG,
+    PALETTE_FLAG, PLAY_FLAG, SCALER_FLAG, SCREEN_FLAG, SIGNAL_FLAG, STATE_FLAG,
 };
 
 /// O mesmo binário é o launcher e, com
@@ -72,6 +74,9 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
     let mut palette = None;
     let mut aspect = None;
     let mut fit = None;
+    let mut screen = None;
+    let mut signal = None;
+    let mut blend = None;
     while let Some(flag) = args.next() {
         let value = args
             .next()
@@ -103,6 +108,19 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
         } else if flag == FIT_FLAG {
             let id = value.to_str().unwrap_or_default();
             fit = Some(Fit::from_id(id).ok_or_else(|| format!("encaixe desconhecido: {id}"))?);
+        } else if flag == SCREEN_FLAG {
+            let id = value.to_str().unwrap_or_default();
+            screen = Some(
+                ScreenEffect::from_id(id)
+                    .ok_or_else(|| format!("efeito de tela desconhecido: {id}"))?,
+            );
+        } else if flag == SIGNAL_FLAG {
+            let id = value.to_str().unwrap_or_default();
+            signal = Some(Signal::from_id(id).ok_or_else(|| format!("sinal desconhecido: {id}"))?);
+        } else if flag == BLEND_FLAG {
+            let id = value.to_str().unwrap_or_default();
+            blend =
+                Some(FrameBlend::from_id(id).ok_or_else(|| format!("rastro desconhecido: {id}"))?);
         } else {
             return Err(format!(
                 "argumento desconhecido: {}",
@@ -127,6 +145,9 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
                 scaler: scaler.unwrap_or(recommended.scaler),
                 aspect: aspect.unwrap_or(recommended.aspect),
                 fit: fit.unwrap_or(recommended.fit),
+                screen: screen.unwrap_or(recommended.screen),
+                signal: signal.unwrap_or(recommended.signal),
+                blend: blend.unwrap_or(recommended.blend),
             }
         },
     })
@@ -134,7 +155,7 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
 
 fn usage() -> ExitCode {
     eprintln!(
-        "uso: {PLAY_FLAG} <caminho da ROM> {CONSOLE_FLAG} <id> [{KEYS_FLAG} <ação=tecla,...>] [{STATE_FLAG} <arquivo>] [{BATTERY_FLAG} <arquivo>] [{BIOS_FLAG} <arquivo>] [{SCALER_FLAG} <id>] [{PALETTE_FLAG} <id>] [{ASPECT_FLAG} <id>] [{FIT_FLAG} <id>]"
+        "uso: {PLAY_FLAG} <caminho da ROM> {CONSOLE_FLAG} <id> [{KEYS_FLAG} <ação=tecla,...>] [{STATE_FLAG} <arquivo>] [{BATTERY_FLAG} <arquivo>] [{BIOS_FLAG} <arquivo>] [{SCALER_FLAG} <id>] [{PALETTE_FLAG} <id>] [{ASPECT_FLAG} <id>] [{FIT_FLAG} <id>] [{SCREEN_FLAG} <id>] [{SIGNAL_FLAG} <id>] [{BLEND_FLAG} <id>]"
     );
     ExitCode::from(2)
 }
@@ -177,6 +198,22 @@ mod tests {
         let image = parse(&genesis_tv).expect("válido").image;
         assert_eq!((image.aspect, image.fit), (AspectRatio::Tv, Fit::Fill));
         assert!(parse(&[CONSOLE_FLAG, "mega-drive", FIT_FLAG, "esticar"]).is_err());
+        let effects = [
+            CONSOLE_FLAG,
+            "game-boy",
+            SCREEN_FLAG,
+            "lcd-grid",
+            BLEND_FLAG,
+            "on",
+            SIGNAL_FLAG,
+            "rgb",
+        ];
+        let image = parse(&effects).expect("válido").image;
+        assert_eq!(
+            (image.screen, image.blend, image.signal),
+            (ScreenEffect::LcdGrid, FrameBlend::On, Signal::Rgb)
+        );
+        assert!(parse(&[CONSOLE_FLAG, "game-boy", SCREEN_FLAG, "vhs"]).is_err());
         assert!(parse(&[CONSOLE_FLAG, "game-boy", SCALER_FLAG, "talvez"]).is_err());
         let pocket = [CONSOLE_FLAG, "game-boy", PALETTE_FLAG, "pocket"];
         assert_eq!(

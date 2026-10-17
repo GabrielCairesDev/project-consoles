@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use player::controls::{Bindings, SUPPORTED_KEYS, System};
-use player::image::{AspectRatio, Fit, ImageSettings, Palette, Scaler};
+use player::image::{
+    AspectRatio, Fit, FrameBlend, ImageSettings, Palette, Scaler, ScreenEffect, Signal,
+};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
@@ -102,6 +104,12 @@ pub struct ImageInfo {
     aspects: Vec<&'static str>,
     /// Encaixes na janela ([`Fit::id`]).
     fits: Vec<&'static str>,
+    /// Efeitos de tela ([`ScreenEffect::id`]).
+    screens: Vec<&'static str>,
+    /// Sinais de vídeo ([`Signal::id`]).
+    signals: Vec<&'static str>,
+    /// Rastro do LCD ([`FrameBlend::id`]).
+    blends: Vec<&'static str>,
     /// Presets, para a interface reconhecer o atual.
     original: ImageChoices,
     recommended: ImageChoices,
@@ -117,6 +125,15 @@ impl ImageInfo {
                 .map(|a| a.id())
                 .collect(),
             fits: Fit::available(system).iter().map(|f| f.id()).collect(),
+            screens: ScreenEffect::available(system)
+                .iter()
+                .map(|e| e.id())
+                .collect(),
+            signals: Signal::available(system).iter().map(|s| s.id()).collect(),
+            blends: FrameBlend::available(system)
+                .iter()
+                .map(|b| b.id())
+                .collect(),
             original: ImageSettings::original(system).into(),
             recommended: ImageSettings::recommended(system).into(),
         }
@@ -881,6 +898,12 @@ mod tests {
         let gb_image = find("game-boy").image.as_ref().expect("imagem do Game Boy");
         assert_eq!(gb_image.palettes, ["core", "dmg", "pocket"]);
         assert_eq!(gb_image.aspects, ["square"]);
+        assert_eq!(gb_image.screens, ["none", "lcd-grid"]);
+        assert_eq!(gb_image.blends, ["off", "on"]);
+        assert_eq!(gb_image.signals, ["rgb"]);
+        assert_eq!(sms_image.screens, ["none", "scanlines", "crt"]);
+        assert_eq!(sms_image.signals, ["rgb", "composite"]);
+        assert_eq!(sms_image.recommended.screen.as_deref(), Some("none"));
         assert_eq!(sms_image.aspects, ["square", "tv"]);
         assert_eq!(sms_image.recommended.aspect.as_deref(), Some("square"));
         assert_eq!(gb_image.recommended.palette.as_deref(), Some("dmg"));

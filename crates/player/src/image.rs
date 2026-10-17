@@ -174,6 +174,108 @@ impl Fit {
     }
 }
 
+/// Simulação da tela (etapa de tela), aplicada depois da ampliação.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenEffect {
+    None,
+    /// Linhas escuras entre as linhas do console, como no CRT.
+    Scanlines,
+    /// Scanlines e máscara de abertura (colunas R, G e B) de um tubo.
+    Crt,
+    /// Divisões entre os pixels de uma tela de LCD.
+    LcdGrid,
+}
+
+impl ScreenEffect {
+    pub const ALL: [Self; 4] = [Self::None, Self::Scanlines, Self::Crt, Self::LcdGrid];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Scanlines => "scanlines",
+            Self::Crt => "crt",
+            Self::LcdGrid => "lcd-grid",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|effect| effect.id() == id)
+    }
+
+    /// Efeitos de TV nos consoles de TV; grade de LCD no portátil.
+    pub fn available(system: System) -> &'static [Self] {
+        match system {
+            System::MasterSystem | System::Genesis | System::PlayStation => {
+                &[Self::None, Self::Scanlines, Self::Crt]
+            }
+            System::GameBoy => &[Self::None, Self::LcdGrid],
+        }
+    }
+}
+
+/// Sinal de vídeo simulado (etapa de cor, antes da ampliação).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Signal {
+    /// Imagem limpa, como num cabo RGB.
+    Rgb,
+    /// Composto simplificado: funde o pontilhado que os jogos usavam como
+    /// transparência na TV. Não é uma simulação completa do sinal NTSC.
+    Composite,
+}
+
+impl Signal {
+    pub const ALL: [Self; 2] = [Self::Rgb, Self::Composite];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Rgb => "rgb",
+            Self::Composite => "composite",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|signal| signal.id() == id)
+    }
+
+    pub fn available(system: System) -> &'static [Self] {
+        match system {
+            System::MasterSystem | System::Genesis | System::PlayStation => &Self::ALL,
+            System::GameBoy => &[Self::Rgb],
+        }
+    }
+}
+
+/// Rastro do LCD (frame blending): cada quadro misturado com o anterior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameBlend {
+    Off,
+    /// Recria o rastro da tela do portátil; efeitos que piscam a cada
+    /// quadro viram transparência em vez de tremer.
+    On,
+}
+
+impl FrameBlend {
+    pub const ALL: [Self; 2] = [Self::Off, Self::On];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::On => "on",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|blend| blend.id() == id)
+    }
+
+    pub fn available(system: System) -> &'static [Self] {
+        match system {
+            System::GameBoy => &Self::ALL,
+            System::MasterSystem | System::Genesis | System::PlayStation => &[Self::Off],
+        }
+    }
+}
+
 /// Configuração de imagem de um console: uma escolha por técnica.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageSettings {
@@ -181,6 +283,9 @@ pub struct ImageSettings {
     pub scaler: Scaler,
     pub aspect: AspectRatio,
     pub fit: Fit,
+    pub screen: ScreenEffect,
+    pub signal: Signal,
+    pub blend: FrameBlend,
 }
 
 impl ImageSettings {
@@ -199,12 +304,17 @@ impl ImageSettings {
             scaler: Scaler::Nearest,
             aspect,
             fit,
+            screen: ScreenEffect::None,
+            signal: Signal::Rgb,
+            blend: FrameBlend::Off,
         }
     }
 
     /// Preset Recomendado do console (o padrão), escolhido pelo hardware
     /// original: contornos de pixel art nos 2D, suavização no 3D e, no
-    /// Game Boy, o verde da tela original. A apresentação é a do Original.
+    /// Game Boy, o verde da tela original. A apresentação é a do Original,
+    /// e os efeitos de tela, sinal e rastro ficam desligados (são escolha
+    /// do usuário, não correção).
     pub fn recommended(system: System) -> Self {
         let scaler = match system {
             System::MasterSystem | System::Genesis | System::GameBoy => Scaler::Epx,
@@ -239,6 +349,15 @@ impl ImageSettings {
         }
         if !Fit::available(system).contains(&self.fit) {
             return Err(error("encaixe", self.fit.id()));
+        }
+        if !ScreenEffect::available(system).contains(&self.screen) {
+            return Err(error("efeito de tela", self.screen.id()));
+        }
+        if !Signal::available(system).contains(&self.signal) {
+            return Err(error("sinal", self.signal.id()));
+        }
+        if !FrameBlend::available(system).contains(&self.blend) {
+            return Err(error("rastro", self.blend.id()));
         }
         Ok(self)
     }
@@ -369,6 +488,55 @@ mod tests {
             ..sms
         };
         assert!(sms_tv_fill.check(System::MasterSystem).is_ok());
+    }
+
+    #[test]
+    fn screen_signal_and_blend_follow_tv_or_lcd() {
+        for effect in ScreenEffect::ALL {
+            assert_eq!(ScreenEffect::from_id(effect.id()), Some(effect));
+        }
+        for signal in Signal::ALL {
+            assert_eq!(Signal::from_id(signal.id()), Some(signal));
+        }
+        for blend in FrameBlend::ALL {
+            assert_eq!(FrameBlend::from_id(blend.id()), Some(blend));
+        }
+        for system in System::ALL {
+            let recommended = ImageSettings::recommended(system);
+            assert_eq!(recommended.screen, ScreenEffect::None);
+            assert_eq!(recommended.signal, Signal::Rgb);
+            assert_eq!(recommended.blend, FrameBlend::Off);
+        }
+        let crt_gb = ImageSettings {
+            screen: ScreenEffect::Crt,
+            ..ImageSettings::original(System::GameBoy)
+        };
+        assert_eq!(
+            crt_gb.check(System::GameBoy).expect_err("sem CRT").option,
+            "efeito de tela"
+        );
+        let grid_sms = ImageSettings {
+            screen: ScreenEffect::LcdGrid,
+            ..ImageSettings::original(System::MasterSystem)
+        };
+        assert!(grid_sms.check(System::MasterSystem).is_err());
+        let blend_genesis = ImageSettings {
+            blend: FrameBlend::On,
+            ..ImageSettings::original(System::Genesis)
+        };
+        assert!(blend_genesis.check(System::Genesis).is_err());
+        let full_gb = ImageSettings {
+            screen: ScreenEffect::LcdGrid,
+            blend: FrameBlend::On,
+            ..ImageSettings::recommended(System::GameBoy)
+        };
+        assert!(full_gb.check(System::GameBoy).is_ok());
+        let composite_sms = ImageSettings {
+            signal: Signal::Composite,
+            screen: ScreenEffect::Crt,
+            ..ImageSettings::recommended(System::MasterSystem)
+        };
+        assert!(composite_sms.check(System::MasterSystem).is_ok());
     }
 
     #[test]

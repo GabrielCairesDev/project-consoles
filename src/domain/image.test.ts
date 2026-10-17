@@ -4,6 +4,9 @@ import { type ImageInfo, presetOf, sameChoices } from "./image";
 const SMS: ImageInfo = {
   aspects: ["square"],
   fits: ["integer"],
+  screens: ["none"],
+  signals: ["rgb"],
+  blends: ["off"],
   palettes: ["core"],
   scalers: ["nearest", "epx"],
   original: { scaler: "nearest" },

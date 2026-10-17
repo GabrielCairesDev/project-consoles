@@ -56,10 +56,10 @@ Referência obrigatória para a regra §13 do `CLAUDE.md`. Vale para os consoles
 ### Etapa 4 — Tela
 | Técnica | Para que serve |
 |---------|----------------|
-| Scanlines | linhas do CRT, intensidade ajustável |
-| Máscara CRT (abertura / fenda) | aparência de tubo |
-| Sinal NTSC (composto, S-Video, RF) | recria a transparência por dithering que os jogos usavam |
-| Grade de LCD | aparência de tela de portátil |
+| Scanlines | linhas do CRT (a partir de 2× na vertical) |
+| Máscara CRT (abertura) | aparência de tubo; no app, junto com as scanlines ("TV de tubo") |
+| Sinal composto (simplificado) | recria a transparência por dithering: mistura 1-2-1 na linha. Não é a simulação NTSC completa (a do Blargg é LGPL) |
+| Grade de LCD | aparência de tela de portátil (a partir de 3×) |
 | Frame blending | recria o rastro do LCD; sem ele, efeitos de piscar viram flicker |
 
 ### Etapa 5 — Ajuste
@@ -89,8 +89,8 @@ Proporção (original, 4:3, pixels quadrados), escala inteira ou preencher, e co
 | xBRZ / ScaleFX | — (licença) | — (licença) | — (licença) | — |
 | Sharp-bilinear | o | o | o | o |
 | Bilinear | — | — | — | R |
-| Scanlines / CRT | o | o | — | o |
-| Sinal NTSC | o | o | — | o |
+| Scanlines / TV de tubo | o | o | — | o |
+| Sinal composto | o | o | — | o |
 | Grade de LCD | — | — | o | — |
 | Frame blending | — | — | o | — |
 | Proporção: pixels quadrados | R | R | R | — |
@@ -101,7 +101,7 @@ Proporção (original, 4:3, pixels quadrados), escala inteira ou preencher, e co
 Ao implementar ou medir uma técnica, atualize esta matriz (custo e estado).
 
 ### 5.1 Estado e custo medido
-Benchmark: `cargo test --release -p player bench_ -- --ignored --nocapture` (`video.rs`). Janela de 2560×1440, média de 120 quadros, faixa de 3 execuções num Mac (Apple Silicon). Só as barras fora do quadro são pintadas; o quadro é escrito uma vez pelo filtro.
+Benchmark: `cargo test --release -p player bench_ -- --ignored --nocapture` (`video.rs`). Todas as etapas rodam em CPU e cabem no orçamento, então a migração para GPU não foi necessária. Janela de 2560×1440, média de 120 quadros, faixa de 3 execuções num Mac (Apple Silicon). Só as barras fora do quadro são pintadas; o quadro é escrito uma vez pelo filtro.
 
 | Técnica | Estado | Caso medido | ms/quadro |
 |---------|--------|-------------|-----------|
@@ -114,6 +114,11 @@ Benchmark: `cargo test --release -p player bench_ -- --ignored --nocapture` (`vi
 | Paleta + sharp-bilinear | implementada | GB 160×144, 10:9 | 0,49–0,50 |
 | Bilinear | implementada | PS1 640×480, 4:3 | 1,29–1,30 |
 | Proporção e encaixe | implementadas (só posicionam o quadro, custo desprezível) | — | — |
+| EPX + scanlines | implementada | SMS 256×192 | 1,38–1,72 |
+| Composto + EPX + TV de tubo | implementada | SMS 256×192 | 2,14–2,17 |
+| Composto + MMPX + TV de tubo (pior caso) | implementada | SMS 256×192 | 3,43–3,47 |
+| Paleta + rastro + EPX + grade do LCD | implementada | GB 160×144 | 1,68–2,01 |
+| Composto + bilinear + TV de tubo | implementada | PS1 640×480, 4:3 | 2,61–2,83 |
 | Resolução interna 2× | em outro branch (`claude/gifted-gates-6ae501`) | — | — |
 | Demais | não implementadas | — | — |
 

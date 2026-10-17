@@ -39,6 +39,12 @@ pub const PALETTE_FLAG: &str = "--palette";
 pub const ASPECT_FLAG: &str = "--aspect";
 /// Argumento com o encaixe na janela ([`player::image::Fit::id`]).
 pub const FIT_FLAG: &str = "--fit";
+/// Argumento com o efeito de tela ([`player::image::ScreenEffect::id`]).
+pub const SCREEN_FLAG: &str = "--screen";
+/// Argumento com o sinal de vídeo ([`player::image::Signal::id`]).
+pub const SIGNAL_FLAG: &str = "--signal";
+/// Argumento com o rastro do LCD ([`player::image::FrameBlend::id`]).
+pub const BLEND_FLAG: &str = "--blend";
 
 /// Núcleo que roda jogos deste console, se houver.
 pub fn system_for(console_id: &str) -> Option<System> {
@@ -136,7 +142,13 @@ fn play_command(exe: &Path, rom: &Path, options: &LaunchOptions) -> Command {
         .arg(ASPECT_FLAG)
         .arg(options.image.aspect.id())
         .arg(FIT_FLAG)
-        .arg(options.image.fit.id());
+        .arg(options.image.fit.id())
+        .arg(SCREEN_FLAG)
+        .arg(options.image.screen.id())
+        .arg(SIGNAL_FLAG)
+        .arg(options.image.signal.id())
+        .arg(BLEND_FLAG)
+        .arg(options.image.blend.id());
     if let Some(state) = &options.state_path {
         command.arg(STATE_FLAG).arg(state);
     }
@@ -324,7 +336,13 @@ pub(crate) mod tests {
                 ASPECT_FLAG,
                 "square",
                 FIT_FLAG,
-                "integer"
+                "integer",
+                SCREEN_FLAG,
+                "none",
+                SIGNAL_FLAG,
+                "rgb",
+                BLEND_FLAG,
+                "off"
             ]
         );
         let with_state = LaunchOptions {
@@ -349,6 +367,12 @@ pub(crate) mod tests {
                 "square",
                 FIT_FLAG,
                 "integer",
+                SCREEN_FLAG,
+                "none",
+                SIGNAL_FLAG,
+                "rgb",
+                BLEND_FLAG,
+                "off",
                 STATE_FLAG,
                 "/dados/sonic.state",
                 BATTERY_FLAG,
@@ -372,7 +396,7 @@ pub(crate) mod tests {
             ..options()
         };
         assert_eq!(
-            args(&plain)[6..14],
+            args(&plain)[6..20],
             [
                 SCALER_FLAG,
                 "nearest",
@@ -381,7 +405,13 @@ pub(crate) mod tests {
                 ASPECT_FLAG,
                 "square",
                 FIT_FLAG,
-                "integer"
+                "integer",
+                SCREEN_FLAG,
+                "none",
+                SIGNAL_FLAG,
+                "rgb",
+                BLEND_FLAG,
+                "off"
             ]
         );
     }

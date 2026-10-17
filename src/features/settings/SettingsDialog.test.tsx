@@ -30,7 +30,7 @@ const SMS: Console = {
   playable: true,
   needsBios: false,
   resumable: true,
-  image: { aspects: ["square"], fits: ["integer"], palettes: ["core"], scalers: ["nearest", "epx"], original: { scaler: "nearest" }, recommended: { scaler: "epx" } },
+  image: { aspects: ["square"], fits: ["integer"], screens: ["none"], signals: ["rgb"], blends: ["off"], palettes: ["core"], scalers: ["nearest", "epx"], original: { scaler: "nearest" }, recommended: { scaler: "epx" } },
 };
 
 const PS1: Console = {
@@ -41,7 +41,7 @@ const PS1: Console = {
   releaseYear: 1994,
   needsBios: true,
   resumable: false,
-  image: { aspects: ["square"], fits: ["integer"], palettes: ["core"], scalers: ["nearest", "bilinear"], original: { scaler: "nearest" }, recommended: { scaler: "bilinear" } },
+  image: { aspects: ["square"], fits: ["integer"], screens: ["none"], signals: ["rgb"], blends: ["off"], palettes: ["core"], scalers: ["nearest", "bilinear"], original: { scaler: "nearest" }, recommended: { scaler: "bilinear" } },
 };
 
 function Harness({
@@ -276,6 +276,9 @@ describe("SettingsDialog", () => {
       image: {
         aspects: ["square"],
         fits: ["integer", "fill"],
+        screens: ["none", "lcd-grid"],
+        signals: ["rgb"],
+        blends: ["off", "on"],
         palettes: ["core", "dmg", "pocket"],
         scalers: ["nearest", "epx", "mmpx", "sharp-bilinear"],
         original: { palette: "core", scaler: "nearest" },
@@ -302,6 +305,18 @@ describe("SettingsDialog", () => {
     expect(screen.getByRole("radio", { name: "Traço preservado" })).toHaveAccessibleDescription(
       /MMPX/,
     );
+    const trail = screen.getByRole("radiogroup", { name: "Rastro do LCD" });
+    fireEvent.click(within(trail).getByRole("radio", { name: "Ligado" }));
+    expect(saveMock).toHaveBeenLastCalledWith("game-boy", {
+      resume: true,
+      image: { palette: "pocket", scaler: "epx", blend: "on" },
+    });
+    expect(
+      within(screen.getByRole("radiogroup", { name: "Efeito de tela" })).getByRole("radio", {
+        name: "Grade do LCD",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup", { name: "Sinal de vídeo" })).not.toBeInTheDocument();
 
     cleanup();
     render(<Harness />);
