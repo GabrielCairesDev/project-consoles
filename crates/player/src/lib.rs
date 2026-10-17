@@ -178,7 +178,8 @@ pub fn check_bios(system: controls::System, bytes: &[u8]) -> Result<(), BiosErro
 /// ignorado.
 ///
 /// Com `enhance`, a imagem passa pela melhoria do console
-/// ([`Enhancement::for_system`]); sem, é a original, pixel a pixel.
+/// ([`Enhancement::for_system`]; no PlayStation também a resolução interna
+/// 2× do rasterizador); sem, é a original, pixel a pixel.
 pub fn run(
     rom_path: &Path,
     bindings: Bindings,
@@ -199,6 +200,7 @@ pub fn run(
         .as_ref()
         .map_or(FALLBACK_SAMPLE_RATE, |a| a.sample_rate);
     let mut machine = load_machine(rom_path, system, bios_path.as_deref(), sample_rate)?;
+    machine.set_core_enhancement(enhance);
     let state_path = state_path.filter(|_| machine.supports_state());
     // Sem RAM com bateria não há o que gravar; com um arquivo que não
     // serve (outro tamanho), ele é preservado em vez de sobrescrito.
@@ -760,6 +762,29 @@ mod tests {
             Machine::PlayStation { console, .. } => console.memory_card().to_vec(),
             _ => unreachable!("só PlayStation"),
         }
+    }
+
+    #[test]
+    fn enhancement_switches_playstation_internal_resolution() {
+        let dir = tempfile::tempdir().expect("pasta temporária");
+        let mut machine = playstation_machine(dir.path());
+        let resolution = |machine: &Machine| match machine {
+            Machine::PlayStation { console, .. } => console.internal_resolution(),
+            _ => unreachable!("só PlayStation"),
+        };
+        assert_eq!(resolution(&machine), psx::InternalResolution::Native);
+        machine.set_core_enhancement(true);
+        assert_eq!(
+            resolution(&machine),
+            machine::PLAYSTATION_ENHANCED_RESOLUTION
+        );
+        machine.set_core_enhancement(false);
+        assert_eq!(resolution(&machine), psx::InternalResolution::Native);
+        // Nos outros consoles a melhoria é só na apresentação.
+        let mut sms = sms_machine(vec![0x18, 0xFE]);
+        let before = sms.save_state();
+        sms.set_core_enhancement(true);
+        assert_eq!(sms.save_state(), before);
     }
 
     #[test]
