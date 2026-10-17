@@ -60,6 +60,7 @@ const GBA: Console = {
   playable: false,
   needsBios: false,
   resumable: true,
+  enhancement: null,
 };
 
 const SCAN: LibraryScan = {
@@ -129,7 +130,7 @@ describe("ConsoleGamesPage", () => {
     clearCoverCache();
     vi.spyOn(console, "error").mockImplementation(() => {});
     getDirMock.mockResolvedValue("/Jogos");
-    vi.mocked(getConsoleSettings).mockResolvedValue({ resume: true });
+    vi.mocked(getConsoleSettings).mockResolvedValue({ resume: true, enhance: true });
     scanMock.mockResolvedValue(SCAN);
     coverMock.mockResolvedValue(null);
   });
@@ -312,6 +313,7 @@ describe("ConsoleGamesPage", () => {
       playable: true,
       needsBios: false,
       resumable: true,
+      enhancement: null,
     };
     const SMS_SCAN: LibraryScan = {
       folder: "/Jogos",
@@ -455,7 +457,7 @@ describe("ConsoleGamesPage", () => {
       });
 
       it("com a opção desligada, todo jogo começa do início", async () => {
-        vi.mocked(getConsoleSettings).mockResolvedValue({ resume: false });
+        vi.mocked(getConsoleSettings).mockResolvedValue({ resume: false, enhance: true });
         await renderPlayable();
 
         expect(screen.getByRole("button", { name: "Jogar Sonic the Hedgehog (USA)" }))

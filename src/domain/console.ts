@@ -1,6 +1,13 @@
 /** Espelha `catalog::ConsoleKind` do núcleo Rust (serde camelCase). */
 export type ConsoleKind = "home" | "handheld" | "hybrid";
 
+/**
+ * Melhoria de imagem do console; espelha `player::Enhancement::id`.
+ * `pixelArt`: ampliação que arredonda contornos (2D); `smooth`: suavização
+ * bilinear (3D).
+ */
+export type ImageEnhancement = "pixelArt" | "smooth";
+
 /** Espelha `catalog::Console` do núcleo Rust (serde camelCase). */
 export interface Console {
   id: string;
@@ -17,6 +24,8 @@ export interface Console {
   needsBios: boolean;
   /** O núcleo sabe "continuar de onde parou". */
   resumable: boolean;
+  /** Melhoria de imagem disponível, se o console roda. */
+  enhancement: ImageEnhancement | null;
 }
 
 export interface DecadeGroup {
