@@ -327,6 +327,7 @@ impl App {
             frame.pixels,
             frame.stride,
             frame.size,
+            frame.aspect,
             &mut buffer,
             (width.get() as usize, height.get() as usize),
         );

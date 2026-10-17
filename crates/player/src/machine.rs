@@ -9,8 +9,8 @@ use crate::resample::Resampler;
 /// Maior quadro entre os consoles de cartucho (o Genesis em H40): define a
 /// janela deles.
 pub const MAX_FRAME: (usize, usize) = (genesis::SCREEN_MAX_WIDTH, genesis::SCREEN_HEIGHT);
-/// Quadro de referência do PlayStation (320×240); os modos de alta
-/// resolução usam uma escala menor na mesma janela.
+/// Quadro de referência do PlayStation (320×240); todos os modos são
+/// esticados para 4:3, como na TV.
 const PLAYSTATION_FRAME: (usize, usize) = (320, 240);
 
 /// Imagem de um quadro: `size.0` pixels válidos em cada linha de `stride`.
@@ -18,6 +18,8 @@ pub struct Frame<'a> {
     pub pixels: &'a [u32],
     pub stride: usize,
     pub size: (usize, usize),
+    /// Proporção de exibição; `None` mantém os pixels quadrados.
+    pub aspect: Option<(usize, usize)>,
 }
 
 pub enum Machine {
@@ -153,16 +155,19 @@ impl Machine {
                 pixels: console.framebuffer(),
                 stride: sms::SCREEN_WIDTH,
                 size: (sms::SCREEN_WIDTH, sms::SCREEN_HEIGHT),
+                aspect: None,
             },
             Self::Genesis { console, .. } => Frame {
                 pixels: console.framebuffer(),
                 stride: genesis::SCREEN_MAX_WIDTH,
                 size: console.frame_size(),
+                aspect: None,
             },
             Self::GameBoy { console, .. } => Frame {
                 pixels: console.framebuffer(),
                 stride: gameboy::SCREEN_WIDTH,
                 size: (gameboy::SCREEN_WIDTH, gameboy::SCREEN_HEIGHT),
+                aspect: None,
             },
             Self::PlayStation { console, .. } => {
                 let (pixels, size) = console.framebuffer();
@@ -170,6 +175,9 @@ impl Machine {
                     pixels,
                     stride: size.0,
                     size,
+                    // Os pixels do PS1 não são quadrados: 256 a 640 colunas
+                    // e 240 ou 480 linhas ocupam a mesma tela 4:3.
+                    aspect: Some((4, 3)),
                 }
             }
         }
