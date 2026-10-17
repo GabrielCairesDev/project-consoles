@@ -10,6 +10,7 @@
 
 mod audio;
 pub mod controls;
+mod enhance;
 mod machine;
 mod resample;
 mod ring;
@@ -33,6 +34,7 @@ use audio::AudioOut;
 use controls::Bindings;
 use machine::{Machine, MachineError};
 use rom::RomReadError;
+pub use video::Enhancement;
 
 /// Taxa usada quando não há áudio: os chips precisam de alguma taxa de saída.
 const FALLBACK_SAMPLE_RATE: u32 = 44_100;
@@ -174,12 +176,16 @@ pub fn check_bios(system: controls::System, bytes: &[u8]) -> Result<(), BiosErro
 /// O PlayStation lê o disco (`.cue` ou `.bin`) em `rom_path` e precisa do
 /// BIOS em `bios_path`; ele ainda não salva estado, então `state_path` é
 /// ignorado.
+///
+/// Com `enhance`, a imagem passa pela melhoria do console
+/// ([`Enhancement::for_system`]); sem, é a original, pixel a pixel.
 pub fn run(
     rom_path: &Path,
     bindings: Bindings,
     state_path: Option<PathBuf>,
     battery_path: Option<PathBuf>,
     bios_path: Option<PathBuf>,
+    enhance: bool,
 ) -> Result<(), PlayerError> {
     let system = bindings.system();
     let audio = match AudioOut::open() {
@@ -218,6 +224,7 @@ pub fn run(
         mono_scratch: Vec::new(),
         context,
         window: None,
+        renderer: video::Renderer::new(enhance.then(|| Enhancement::for_system(system))),
         bindings,
         state_path,
         battery_path,
@@ -261,6 +268,7 @@ struct App {
     mono_scratch: Vec<f32>,
     context: softbuffer::Context<OwnedDisplayHandle>,
     window: Option<GameWindow>,
+    renderer: video::Renderer,
     bindings: Bindings,
     state_path: Option<PathBuf>,
     battery_path: Option<PathBuf>,
@@ -323,7 +331,7 @@ impl App {
             .map_err(PlayerError::Surface)?;
         let mut buffer = game.surface.buffer_mut().map_err(PlayerError::Surface)?;
         let frame = self.machine.frame();
-        video::blit(
+        self.renderer.draw(
             frame.pixels,
             frame.stride,
             frame.size,

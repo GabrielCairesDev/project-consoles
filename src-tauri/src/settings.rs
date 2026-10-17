@@ -27,11 +27,17 @@ pub struct Settings {
 pub struct ConsoleSettings {
     /// Salvar o progresso ao fechar e continuar dele ao abrir.
     pub resume: bool,
+    /// Melhoria de imagem do console ([`player::Enhancement`]); desligada,
+    /// a imagem é a original.
+    pub enhance: bool,
 }
 
 impl Default for ConsoleSettings {
     fn default() -> Self {
-        Self { resume: true }
+        Self {
+            resume: true,
+            enhance: true,
+        }
     }
 }
 
@@ -123,7 +129,20 @@ mod tests {
         )
         .expect("mapa válido");
         settings.set_controls(&custom);
-        settings.set_console("master-system", ConsoleSettings { resume: false });
+        settings.set_console(
+            "master-system",
+            ConsoleSettings {
+                resume: false,
+                enhance: true,
+            },
+        );
+        settings.set_console(
+            "playstation",
+            ConsoleSettings {
+                resume: true,
+                enhance: false,
+            },
+        );
         settings.save(&path).expect("save");
         let loaded = Settings::load(&path).expect("load");
         assert_eq!(loaded, settings);
@@ -134,6 +153,8 @@ mod tests {
             "cada console tem as próprias teclas"
         );
         assert!(!loaded.console("master-system").resume);
+        assert!(loaded.console("master-system").enhance);
+        assert!(!loaded.console("playstation").enhance);
     }
 
     #[test]
@@ -151,12 +172,16 @@ mod tests {
     }
 
     #[test]
-    fn console_settings_default_to_resume() {
+    fn console_settings_default_to_resume_and_enhance() {
         let settings = Settings::default();
         assert!(settings.console("master-system").resume);
-        // Campo ausente no JSON também vale o padrão.
+        assert!(settings.console("master-system").enhance);
+        // Campo ausente no JSON também vale o padrão: arquivos de antes da
+        // melhoria de imagem a ligam.
         let parsed: ConsoleSettings = serde_json::from_str("{}").expect("json");
-        assert!(parsed.resume);
+        assert!(parsed.resume && parsed.enhance);
+        let older: ConsoleSettings = serde_json::from_str(r#"{ "resume": false }"#).expect("json");
+        assert!(!older.resume && older.enhance);
     }
 
     #[test]

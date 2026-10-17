@@ -28,6 +28,12 @@ pub const STATE_FLAG: &str = "--state";
 pub const BATTERY_FLAG: &str = "--sav";
 /// Argumento com o BIOS do console (o PlayStation precisa dele).
 pub const BIOS_FLAG: &str = "--bios";
+/// Argumento que desliga a melhoria de imagem (`--enhance off`); sem ele,
+/// ela fica ligada.
+pub const ENHANCE_FLAG: &str = "--enhance";
+/// Valores de [`ENHANCE_FLAG`].
+pub const ENHANCE_ON: &str = "on";
+pub const ENHANCE_OFF: &str = "off";
 
 /// Núcleo que roda jogos deste console, se houver.
 pub fn system_for(console_id: &str) -> Option<System> {
@@ -88,6 +94,8 @@ pub struct LaunchOptions {
     pub battery_path: Option<PathBuf>,
     /// BIOS do console, para os que precisam dele.
     pub bios_path: Option<PathBuf>,
+    /// Melhoria de imagem do console ligada.
+    pub enhance: bool,
 }
 
 type CommandBuilder = Box<dyn Fn(&Path, &LaunchOptions) -> io::Result<Command> + Send + Sync>;
@@ -124,6 +132,9 @@ fn play_command(exe: &Path, rom: &Path, options: &LaunchOptions) -> Command {
     }
     if let Some(bios) = &options.bios_path {
         command.arg(BIOS_FLAG).arg(bios);
+    }
+    if !options.enhance {
+        command.arg(ENHANCE_FLAG).arg(ENHANCE_OFF);
     }
     command
 }
@@ -231,6 +242,7 @@ pub(crate) mod tests {
             state_path: None,
             battery_path: None,
             bios_path: None,
+            enhance: true,
         }
     }
 
@@ -322,11 +334,23 @@ pub(crate) mod tests {
             bios_path: Some(PathBuf::from("/dados/bios/playstation.bin")),
             ..options()
         };
-        let args = args(&with_bios);
+        let bios_args = args(&with_bios);
         assert_eq!(
-            args[args.len() - 2..],
+            bios_args[bios_args.len() - 2..],
             [BIOS_FLAG, "/dados/bios/playstation.bin"]
         );
+
+        // Melhoria de imagem: ligada não passa nada; desligada, `off`.
+        let plain = LaunchOptions {
+            enhance: false,
+            ..options()
+        };
+        let plain_args = args(&plain);
+        assert_eq!(
+            plain_args[plain_args.len() - 2..],
+            [ENHANCE_FLAG, ENHANCE_OFF]
+        );
+        assert!(!args(&options()).iter().any(|a| a == ENHANCE_FLAG));
     }
 
     #[test]

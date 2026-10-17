@@ -3,7 +3,7 @@ import { CircleAlert, CircleCheck, FolderOpen, RotateCw, TriangleAlert } from "l
 import { Button } from "../../components/Button";
 import { Dialog } from "../../components/Dialog";
 import { Switch } from "../../components/Switch";
-import type { Console } from "../../domain/console";
+import type { Console, ImageEnhancement } from "../../domain/console";
 import { type BiosControl, useBios } from "./useBios";
 import type { ConsoleSettingsControl } from "./useConsoleSettings";
 import styles from "./SettingsDialog.module.css";
@@ -15,10 +15,19 @@ interface SettingsDialogProps {
   onClose: () => void;
 }
 
+/** O que a melhoria de imagem faz em cada tipo de console. */
+const ENHANCEMENT_DESCRIPTION: Record<ImageEnhancement, string> = {
+  pixelArt:
+    "Amplia a pixel art com contornos arredondados, sem borrar nem mudar as cores. Desligada, mostra os pixels originais. Vale a partir do próximo jogo aberto.",
+  smooth:
+    "Suaviza a imagem ampliada, reduzindo o serrilhado e o pontilhado dos gráficos 3D. Desligada, mostra os pixels originais. Vale a partir do próximo jogo aberto.",
+};
+
 /** Opções de jogo de um console. */
 export function SettingsDialog({ console, control, onClose }: SettingsDialogProps) {
   const { state, saving, saveError, update, retry } = control;
   const gameSectionId = useId();
+  const imageSectionId = useId();
   const bios = useBios(console.id, console.needsBios);
 
   return (
@@ -59,6 +68,21 @@ export function SettingsDialog({ console, control, onClose }: SettingsDialogProp
               onChange={() => {}}
             />
           )}
+        </section>
+      )}
+
+      {state.status === "ready" && console.enhancement && (
+        <section className={styles.section} aria-labelledby={imageSectionId}>
+          <h3 id={imageSectionId} className={styles.sectionTitle}>
+            Imagem
+          </h3>
+          <Switch
+            label="Melhoria de imagem"
+            description={ENHANCEMENT_DESCRIPTION[console.enhancement]}
+            checked={state.settings.enhance}
+            disabled={saving}
+            onChange={(enhance) => update({ enhance })}
+          />
         </section>
       )}
 

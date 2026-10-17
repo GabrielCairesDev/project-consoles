@@ -85,6 +85,9 @@ pub struct ConsoleInfo {
     needs_bios: bool,
     /// O núcleo sabe "continuar de onde parou".
     resumable: bool,
+    /// Melhoria de imagem do console ([`player::Enhancement::id`]), se ele
+    /// roda.
+    enhancement: Option<&'static str>,
 }
 
 /// Lista o catálogo de consoles para a interface.
@@ -100,6 +103,7 @@ pub fn list_consoles() -> Vec<ConsoleInfo> {
                 playable: system.is_some(),
                 needs_bios: system.is_some_and(System::needs_bios),
                 resumable: system.is_some_and(System::saves_state),
+                enhancement: system.map(|s| player::Enhancement::for_system(s).id()),
             }
         })
         .collect()
@@ -283,6 +287,7 @@ fn launch_options(state: &AppState, game: &Game) -> CommandResult<LaunchOptions>
         // O save do próprio jogo vale sempre, com ou sem "continuar".
         battery_path: Some(state.saves.battery_path_for(game)),
         bios_path,
+        enhance: console_settings.enhance,
     };
     Ok(options)
 }
@@ -762,6 +767,7 @@ mod tests {
             state_path: None,
             battery_path: None,
             bios_path: None,
+            enhance: true,
         };
         state
             .runner
@@ -820,9 +826,12 @@ mod tests {
         let find = |id: &str| consoles.iter().find(|c| c.console.id == id).expect(id);
         let ps1 = find("playstation");
         assert!(ps1.supported && ps1.playable && ps1.needs_bios && !ps1.resumable);
+        assert_eq!(ps1.enhancement, Some("smooth"));
         let sms = find("master-system");
         assert!(sms.playable && !sms.needs_bios && sms.resumable);
+        assert_eq!(sms.enhancement, Some("pixelArt"));
         let ps2 = find("playstation-2");
         assert!(!ps2.playable && !ps2.needs_bios && !ps2.resumable);
+        assert_eq!(ps2.enhancement, None);
     }
 }
