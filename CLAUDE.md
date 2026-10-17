@@ -109,11 +109,14 @@ Se faltar contexto essencial, faça uma pergunta objetiva. Decisões de baixo ri
 - Gravação atômica (arquivo temporário + rename), sem perder o save se o processo morrer. Um save existente que não pôde ser lido ou não confere é preservado, nunca sobrescrito.
 - Testes obrigatórios: ida e volta do save, save mantido ao recomeçar, recusa de tamanho/formato errado sem perda do arquivo, e exportar/importar.
 
-## 13. Melhoria de imagem (obrigatório quando o console permitir)
-- Se o console admite uma melhoria de imagem que faça sentido para ele (ex.: filtro de ampliação para pixel art nos consoles 2D, suavização ou resolução interna maior nos 3D), ela deve ser implementada ao adicionar o console; não é "para depois".
-- Vem ligada por padrão e pode ser desligada por console nas configurações. Desligada, a imagem é a original, pixel a pixel.
-- A melhoria é só de apresentação: não altera a emulação, o tempo do jogo, os saves nem o estado salvo, e não pode derrubar o desempenho abaixo da velocidade real do console.
-- Testes obrigatórios: saída do filtro em casos conhecidos, imagem idêntica à original com a opção desligada e a preferência salva e respeitada ao abrir o jogo.
+## 13. Melhoria de imagem (obrigatório em todo console)
+Catálogo, pipeline, matriz por console, orçamento e testes: @docs/melhoria-de-imagem.md. Siga-o ao adicionar ou alterar qualquer console.
+- O usuário escolhe o que melhorar. Cada console oferece todas as técnicas do catálogo que fazem sentido para ele, cada uma ligável e ajustável por console; nunca um único liga/desliga.
+- Padrão: preset Recomendado do console, justificado pelo hardware original. O preset Original (pixel a pixel) está sempre disponível. Escolhas do usuário nunca são sobrescritas sem ele pedir.
+- Ao adicionar um console, as técnicas aplicáveis fazem parte do critério de conclusão; não são "para depois". Reaproveite as técnicas que o player já tem.
+- As etapas do player (cor, escala, tela, ajuste) são só apresentação. As do núcleo (ex.: resolução interna, PGXP) mudam o desenho, mas nunca o tempo do jogo, os saves ou o estado salvo.
+- Nenhuma combinação pode derrubar o jogo abaixo da velocidade real do console. Meça em release e respeite o orçamento do documento; migrar a apresentação para GPU é decisão do usuário.
+- Testes obrigatórios: os da seção 7 do documento, incluindo cada etapa desligada ser identidade e a configuração salva, migrada e respeitada ao abrir o jogo.
 
 ## 14. Proibições
 Nunca: inventar resultados de compilação/testes/benchmarks; contornar erros do compilador sem investigar a causa; usar `unsafe` sem justificativa; introduzir dependências desnecessárias; otimizar com base só em suposições; desativar verificações de segurança/qualidade para aprovar uma alteração; modificar funcionalidades não relacionadas; tratar código compilável como correto; entregar sem avaliar casos de falha; declarar concluída uma tarefa com falhas relevantes não informadas.

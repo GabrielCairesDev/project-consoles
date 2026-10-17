@@ -28,6 +28,15 @@ A interface deve contemplar, conforme o escopo real do produto (não crie funcio
 - Indicadores claros do estado de cada jogo.
 - Feedback visual para ação, seleção, foco, hover e desativado.
 
+### Configurações de imagem (por console)
+Regras de conteúdo em `docs/melhoria-de-imagem.md`.
+- No topo, presets (Original, Recomendado e outros do console). O preset atual aparece marcado, e vira "Personalizado" quando o usuário muda uma opção.
+- Abaixo, as opções avançadas agrupadas por etapa (Imagem 3D, Cor, Escala, Tela, Ajuste), visíveis sem esconder nada do usuário.
+- Mostre só as opções que se aplicam ao console. Não exiba controles desativados sem motivo.
+- Cada opção tem nome em linguagem simples e uma frase dizendo o que muda na imagem. Opções pesadas mostram o aviso de desempenho antes de ligar.
+- A ação "Restaurar recomendado" fica sempre visível e não apaga nada além das opções de imagem.
+- Mudanças são salvas na hora e valem ao abrir o próximo jogo. Durante o jogo, o atalho de comparação Original/atual é informado na tela de configurações.
+
 ## 4. Design system obrigatório
 Centralize decisões visuais em tokens e componentes reutilizáveis. Defina: cores (fundo, superfícies, texto, bordas, estados), escala tipográfica e pesos, escala de espaçamento, raios, elevação/sombras, dimensões e comportamento de ícones, animações e durações, estados interativos, regras de layout e breakpoints.
 
