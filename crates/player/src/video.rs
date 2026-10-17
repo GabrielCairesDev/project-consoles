@@ -1,12 +1,16 @@
 //! Escala do quadro para a janela, centralizada com barras pretas.
 //!
 //! Sem proporção definida a escala é inteira (pixels nítidos e iguais);
-//! com proporção, o quadro ocupa o maior retângulo dela que cabe. A
-//! ampliação segue o [`Scaler`] escolhido; o [`Scaler::Nearest`] é a
-//! imagem original, pixel a pixel.
+//! com proporção, o quadro ocupa o maior retângulo dela que cabe. Antes de
+//! ampliar, a etapa de cor aplica a [`Palette`](crate::image::Palette); a ampliação segue o
+//! [`Scaler`] escolhido. [`ImageSettings::ORIGINAL`] é a imagem original,
+//! pixel a pixel.
 
 use crate::enhance::{self, Tap};
-use crate::image::Scaler;
+use crate::image::{ImageSettings, Scaler};
+
+/// Tons que o núcleo do Game Boy desenha; a [`Palette`](crate::image::Palette) os substitui.
+const CORE_SHADES: [u32; 4] = gameboy::SHADES;
 
 /// Retângulo de destino do quadro dentro da janela.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,11 +100,14 @@ fn pixel_art_factor(k: usize) -> usize {
     }
 }
 
-/// Desenha os quadros com a ampliação escolhida, reaproveitando os buffers
-/// intermediários entre quadros.
+/// Desenha os quadros com as opções de imagem escolhidas, reaproveitando
+/// os buffers intermediários entre quadros.
 #[derive(Debug)]
 pub struct Renderer {
     scaler: Scaler,
+    /// Tons que substituem os do núcleo, se a paleta não for a dele.
+    shades: Option<[u32; 4]>,
+    colored: Vec<u32>,
     scaled: Vec<u32>,
     pass: Vec<u32>,
     columns: Vec<Tap>,
@@ -108,9 +115,11 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn new(scaler: Scaler) -> Self {
+    pub fn new(image: ImageSettings) -> Self {
         Self {
-            scaler,
+            scaler: image.scaler,
+            shades: image.palette.shades(),
+            colored: Vec::new(),
             scaled: Vec::new(),
             pass: Vec::new(),
             columns: Vec::new(),
@@ -135,11 +144,32 @@ impl Renderer {
         if frame.0 == 0 || frame.1 == 0 || rect.width == 0 || rect.height == 0 {
             return;
         }
+        // Etapa de cor: o quadro recolorido vira a origem da ampliação. O
+        // buffer sai de `self` durante o desenho e volta depois, para ser
+        // reaproveitado no próximo quadro.
+        let mut colored = std::mem::take(&mut self.colored);
+        let (src, stride) = match &self.shades {
+            Some(shades) => {
+                enhance::recolor(src, stride, frame, &CORE_SHADES, shades, &mut colored);
+                (colored.as_slice(), frame.0)
+            }
+            None => (src, stride),
+        };
         match self.scaler {
             Scaler::Nearest => nearest(src, stride, frame, rect, dst, window),
             Scaler::Epx => self.pixel_art(src, stride, frame, rect, dst, window),
-            Scaler::Bilinear => self.smooth(src, stride, frame, rect, dst, window),
+            Scaler::Bilinear => {
+                enhance::taps(frame.0, rect.width, &mut self.columns);
+                enhance::taps(frame.1, rect.height, &mut self.rows);
+                self.interpolate(src, stride, frame, rect, dst, window);
+            }
+            Scaler::SharpBilinear => {
+                enhance::sharp_taps(frame.0, rect.width, &mut self.columns);
+                enhance::sharp_taps(frame.1, rect.height, &mut self.rows);
+                self.interpolate(src, stride, frame, rect, dst, window);
+            }
         }
+        self.colored = colored;
     }
 
     fn pixel_art(
@@ -173,7 +203,9 @@ impl Renderer {
 
     /// Bilinear separável: cada linha de origem é interpolada uma vez na
     /// horizontal, e cada linha da janela mistura duas delas.
-    fn smooth(
+    /// Interpolação separável (linhas, depois colunas) com as amostras já
+    /// calculadas em `columns` e `rows`: bilinear comum ou sharp-bilinear.
+    fn interpolate(
         &mut self,
         src: &[u32],
         stride: usize,
@@ -183,8 +215,6 @@ impl Renderer {
         window: (usize, usize),
     ) {
         let (visible_w, visible_h) = visible(rect, window);
-        enhance::taps(frame.0, rect.width, &mut self.columns);
-        enhance::taps(frame.1, rect.height, &mut self.rows);
         let columns = &self.columns[..visible_w];
         self.pass.resize(frame.1 * visible_w, 0);
         for (y, out) in self.pass.chunks_exact_mut(visible_w).enumerate() {
@@ -219,7 +249,7 @@ mod tests {
         dst: &mut [u32],
         window: (usize, usize),
     ) {
-        Renderer::new(Scaler::Nearest).draw(src, stride, frame, aspect, dst, window);
+        Renderer::new(ImageSettings::ORIGINAL).draw(src, stride, frame, aspect, dst, window);
     }
 
     fn draw(
@@ -231,8 +261,60 @@ mod tests {
         window: (usize, usize),
     ) -> Vec<u32> {
         let mut dst = vec![9; window.0 * window.1];
-        Renderer::new(scaler).draw(src, stride, frame, aspect, &mut dst, window);
+        Renderer::new(ImageSettings {
+            scaler,
+            ..ImageSettings::ORIGINAL
+        })
+        .draw(src, stride, frame, aspect, &mut dst, window);
         dst
+    }
+
+    #[test]
+    fn palette_recolors_before_scaling_and_original_keeps_the_core_colors() {
+        use crate::image::Palette;
+        // Os 4 tons do núcleo e uma cor que não é tom, 5×1 em janela 10×2.
+        let src = [
+            CORE_SHADES[0],
+            CORE_SHADES[1],
+            CORE_SHADES[2],
+            CORE_SHADES[3],
+            0x123456,
+        ];
+        let draw_with = |image: ImageSettings| {
+            let mut dst = vec![9; 20];
+            Renderer::new(image).draw(&src, 5, (5, 1), None, &mut dst, (10, 2));
+            dst
+        };
+        let shades = Palette::Dmg.shades().expect("tons do DMG");
+        let green = draw_with(ImageSettings {
+            palette: Palette::Dmg,
+            ..ImageSettings::ORIGINAL
+        });
+        let expected_row: Vec<u32> = [shades[0], shades[1], shades[2], shades[3], 0x123456]
+            .iter()
+            .flat_map(|&c| [c, c])
+            .collect();
+        assert_eq!(green[..10], expected_row[..]);
+        assert_eq!(green[10..], expected_row[..]);
+
+        let mut nearest_only = vec![9; 20];
+        blit(&src, 5, (5, 1), None, &mut nearest_only, (10, 2));
+        assert_eq!(draw_with(ImageSettings::ORIGINAL), nearest_only);
+    }
+
+    #[test]
+    fn sharp_bilinear_is_nearest_at_integer_scale_and_blends_only_seams() {
+        let src = [0x000000, 0x0000FF, 0x00FF00, 0xFF0000];
+        let mut nearest_only = vec![9; 8 * 6];
+        blit(&src, 2, (2, 2), None, &mut nearest_only, (8, 6));
+        assert_eq!(
+            draw(Scaler::SharpBilinear, &src, 2, (2, 2), None, (8, 6)),
+            nearest_only
+        );
+        // 2×1 esticado para 5×1: só a coluna da divisa mistura.
+        let src = [0x000000, 0x0000FF];
+        let dst = draw(Scaler::SharpBilinear, &src, 2, (2, 1), Some((5, 1)), (5, 1));
+        assert_eq!(dst, [0x00, 0x00, 0x7F, 0xFF, 0xFF]);
     }
 
     #[test]
@@ -417,5 +499,107 @@ mod tests {
             3, 3, 3, 4, 4, 4,
         ];
         assert_eq!(dst, expected);
+    }
+
+    /// Custo de cada técnica por quadro numa janela de 2560×1440, para a
+    /// matriz de `docs/melhoria-de-imagem.md`. Rodar em release:
+    /// `cargo test --release -p player bench_ -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "benchmark: rodar em release, sob demanda"]
+    fn bench_techniques_at_1440p() {
+        use crate::image::Palette;
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        const WINDOW: (usize, usize) = (2560, 1440);
+        const FRAMES: u32 = 120;
+        // Quadro com detalhe (sem áreas lisas, que favorecem o EPX).
+        let frame = |w: usize, h: usize, colors: &[u32]| -> Vec<u32> {
+            (0..w * h)
+                .map(|i| colors[(i * 7 + i / w * 3) % colors.len()])
+                .collect()
+        };
+        let rgb = [0x102030, 0xF0E0D0, 0x40A040, 0xA04040, 0x2040A0];
+        let cases = [
+            (
+                "SMS original",
+                (256, 192),
+                frame(256, 192, &rgb),
+                ImageSettings::ORIGINAL,
+                None,
+            ),
+            (
+                "SMS epx",
+                (256, 192),
+                frame(256, 192, &rgb),
+                ImageSettings {
+                    scaler: Scaler::Epx,
+                    ..ImageSettings::ORIGINAL
+                },
+                None,
+            ),
+            (
+                "SMS sharp-bilinear 4:3",
+                (256, 192),
+                frame(256, 192, &rgb),
+                ImageSettings {
+                    scaler: Scaler::SharpBilinear,
+                    ..ImageSettings::ORIGINAL
+                },
+                Some((4, 3)),
+            ),
+            (
+                "GB paleta + epx",
+                (160, 144),
+                frame(160, 144, &CORE_SHADES),
+                ImageSettings {
+                    palette: Palette::Dmg,
+                    scaler: Scaler::Epx,
+                },
+                None,
+            ),
+            (
+                "GB paleta + sharp 10:9",
+                (160, 144),
+                frame(160, 144, &CORE_SHADES),
+                ImageSettings {
+                    palette: Palette::Dmg,
+                    scaler: Scaler::SharpBilinear,
+                },
+                Some((10, 9)),
+            ),
+            (
+                "PS1 bilinear 4:3",
+                (640, 480),
+                frame(640, 480, &rgb),
+                ImageSettings {
+                    scaler: Scaler::Bilinear,
+                    ..ImageSettings::ORIGINAL
+                },
+                Some((4, 3)),
+            ),
+            (
+                "PS1 sharp-bilinear 4:3",
+                (320, 240),
+                frame(320, 240, &rgb),
+                ImageSettings {
+                    scaler: Scaler::SharpBilinear,
+                    ..ImageSettings::ORIGINAL
+                },
+                Some((4, 3)),
+            ),
+        ];
+        let mut dst = vec![0; WINDOW.0 * WINDOW.1];
+        for (name, size, src, image, aspect) in cases {
+            let mut renderer = Renderer::new(image);
+            renderer.draw(&src, size.0, size, aspect, &mut dst, WINDOW);
+            let start = Instant::now();
+            for _ in 0..FRAMES {
+                renderer.draw(black_box(&src), size.0, size, aspect, &mut dst, WINDOW);
+                black_box(&dst);
+            }
+            let ms = start.elapsed().as_secs_f64() * 1000.0 / f64::from(FRAMES);
+            println!("{name:<26} {ms:>6.2} ms/quadro");
+        }
     }
 }

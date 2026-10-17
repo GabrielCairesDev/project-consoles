@@ -94,6 +94,23 @@ Proporção (original, 4:3, pixels quadrados), escala inteira ou preencher, e co
 
 Ao implementar ou medir uma técnica, atualize esta matriz (custo e estado).
 
+### 5.1 Estado e custo medido
+Benchmark: `cargo test --release -p player bench_ -- --ignored --nocapture` (`video.rs`). Janela de 2560×1440, média de 120 quadros, faixa de 3 execuções num Mac (Apple Silicon). O custo inclui limpar e preencher a janela inteira, que sozinho já é a linha "Original".
+
+| Técnica | Estado | Caso medido | ms/quadro |
+|---------|--------|-------------|-----------|
+| Original (vizinho mais próximo) | implementada | SMS 256×192 | 2,4–2,6 |
+| Scale2x/3x (EPX) | implementada | SMS 256×192 | 3,6–3,9 |
+| Sharp-bilinear | implementada | SMS 256×192, 4:3 | 2,5–3,1 |
+| Sharp-bilinear | implementada | PS1 320×240, 4:3 | 2,8–3,2 |
+| Paleta + EPX | implementada | GB 160×144 | 2,5–2,7 |
+| Paleta + sharp-bilinear | implementada | GB 160×144, 10:9 | 2,3–2,7 |
+| Bilinear | implementada, **acima do orçamento** | PS1 640×480, 4:3 | 5,1–5,4 |
+| Resolução interna 2× | em outro branch (`claude/gifted-gates-6ae501`) | — | — |
+| Demais | não implementadas | — | — |
+
+Pendência: a bilinear do PS1 em 640×480 passa dos 4 ms. Ela precisa ser otimizada antes de continuar como Recomendado nessa resolução, ou o Recomendado do PS1 muda para sharp-bilinear (decisão do usuário).
+
 ## 6. Configurações salvas
 - Ficam por console em `ConsoleSettings.image` (`ImageChoices`), com uma escolha por técnica, gravada pelo id estável do player (`player::image`). Escolha ausente vale o Recomendado. O preset não é gravado: ele é deduzido comparando as escolhas com Original e Recomendado.
 - Migração do formato antigo: `enhance: true` vira Recomendado; `enhance: false` vira Original.

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { type ImageInfo, presetOf, sameChoices } from "./image";
 
 const SMS: ImageInfo = {
+  palettes: ["core"],
   scalers: ["nearest", "epx"],
   original: { scaler: "nearest" },
   recommended: { scaler: "epx" },
@@ -16,6 +17,12 @@ describe("presets de imagem", () => {
   it("qualquer outra combinação é Personalizado", () => {
     expect(presetOf({ scaler: "bilinear" }, SMS)).toBe("custom");
     expect(presetOf({}, SMS)).toBe("custom");
+  });
+
+  it("compara todas as técnicas", () => {
+    expect(sameChoices({ palette: "dmg", scaler: "epx" }, { palette: "core", scaler: "epx" })).toBe(
+      false,
+    );
   });
 
   it("compara técnica por técnica", () => {

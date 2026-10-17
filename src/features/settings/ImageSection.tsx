@@ -6,6 +6,7 @@ import {
   type ImageChoices,
   type ImageInfo,
   type ImagePreset,
+  type Palette,
   presetOf,
   type Scaler,
 } from "../../domain/image";
@@ -31,6 +32,27 @@ const SCALER_CHOICE: Record<Scaler, Omit<Choice<Scaler>, "value">> = {
   bilinear: {
     label: "Suavizada",
     description: "Suaviza o serrilhado e o pontilhado dos gráficos 3D.",
+  },
+  "sharp-bilinear": {
+    label: "Pixels uniformes",
+    description:
+      "Todos os pixels do mesmo tamanho em qualquer janela, com só a divisa entre eles suavizada.",
+  },
+};
+
+/** Nome e aparência de cada paleta. */
+const PALETTE_CHOICE: Record<Palette, Omit<Choice<Palette>, "value">> = {
+  core: {
+    label: "Cinza",
+    description: "Tons neutros de cinza, sem imitar nenhuma tela.",
+  },
+  dmg: {
+    label: "Verde original",
+    description: "O verde-oliva da tela do Game Boy original.",
+  },
+  pocket: {
+    label: "Game Boy Pocket",
+    description: "Os tons neutros e mais escuros da tela do Pocket.",
   },
 };
 
@@ -71,6 +93,15 @@ export function ImageSection({ image, choices, disabled, onChange }: ImageSectio
         disabled={disabled}
         onChange={applyPreset}
       />
+      {image.palettes.length > 1 && (
+        <ChoiceGroup
+          label="Paleta"
+          choices={image.palettes.map((value) => ({ value, ...PALETTE_CHOICE[value] }))}
+          value={choices.palette ?? null}
+          disabled={disabled}
+          onChange={(palette) => onChange({ ...choices, palette })}
+        />
+      )}
       {image.scalers.length > 1 && (
         <ChoiceGroup
           label="Ampliação"

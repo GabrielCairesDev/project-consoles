@@ -22,7 +22,7 @@ use cpu::Cpu;
 
 pub use cart::CartError;
 pub use joypad::Buttons;
-pub use ppu::{HEIGHT as SCREEN_HEIGHT, WIDTH as SCREEN_WIDTH};
+pub use ppu::{HEIGHT as SCREEN_HEIGHT, SHADES, WIDTH as SCREEN_WIDTH};
 
 /// Clock da CPU (Hz).
 pub const CPU_CLOCK: u32 = 4_194_304;

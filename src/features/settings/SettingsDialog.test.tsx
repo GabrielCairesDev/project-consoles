@@ -30,7 +30,7 @@ const SMS: Console = {
   playable: true,
   needsBios: false,
   resumable: true,
-  image: { scalers: ["nearest", "epx"], original: { scaler: "nearest" }, recommended: { scaler: "epx" } },
+  image: { palettes: ["core"], scalers: ["nearest", "epx"], original: { scaler: "nearest" }, recommended: { scaler: "epx" } },
 };
 
 const PS1: Console = {
@@ -41,7 +41,7 @@ const PS1: Console = {
   releaseYear: 1994,
   needsBios: true,
   resumable: false,
-  image: { scalers: ["nearest", "bilinear"], original: { scaler: "nearest" }, recommended: { scaler: "bilinear" } },
+  image: { palettes: ["core"], scalers: ["nearest", "bilinear"], original: { scaler: "nearest" }, recommended: { scaler: "bilinear" } },
 };
 
 function Harness({
@@ -265,6 +265,43 @@ describe("SettingsDialog", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("disco cheio");
     expect(within(presets).getByRole("radio", { name: "Recomendado" })).toBeChecked();
+  });
+
+  it("Game Boy escolhe a paleta, e os outros consoles não mostram a opção", async () => {
+    const gameBoy: Console = {
+      ...SMS,
+      id: "game-boy",
+      name: "Game Boy",
+      kind: "handheld",
+      image: {
+        palettes: ["core", "dmg", "pocket"],
+        scalers: ["nearest", "epx", "sharp-bilinear"],
+        original: { palette: "core", scaler: "nearest" },
+        recommended: { palette: "dmg", scaler: "epx" },
+      },
+    };
+    getMock.mockResolvedValue({ resume: true, image: { palette: "dmg", scaler: "epx" } });
+    render(<Harness console={gameBoy} />);
+
+    const palettes = await screen.findByRole("radiogroup", { name: "Paleta" });
+    expect(within(palettes).getByRole("radio", { name: "Verde original" })).toBeChecked();
+    fireEvent.click(within(palettes).getByRole("radio", { name: "Game Boy Pocket" }));
+
+    expect(saveMock).toHaveBeenCalledWith("game-boy", {
+      resume: true,
+      image: { palette: "pocket", scaler: "epx" },
+    });
+    expect(await screen.findByRole("radio", { name: "Personalizado" })).toBeChecked();
+    expect(
+      within(screen.getByRole("radiogroup", { name: "Ampliação" })).getByRole("radio", {
+        name: "Pixels uniformes",
+      }),
+    ).toBeInTheDocument();
+
+    cleanup();
+    render(<Harness />);
+    await screen.findByRole("radiogroup", { name: "Ampliação" });
+    expect(screen.queryByRole("radiogroup", { name: "Paleta" })).not.toBeInTheDocument();
   });
 
   it("console sem opções de imagem não mostra a seção", async () => {

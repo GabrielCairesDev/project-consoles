@@ -32,6 +32,9 @@ pub const BIOS_FLAG: &str = "--bios";
 /// Argumento com a ampliação do quadro ([`player::image::Scaler::id`]);
 /// sem ele, vale a recomendada do console.
 pub const SCALER_FLAG: &str = "--scaler";
+/// Argumento com a paleta ([`player::image::Palette::id`]); sem ele, vale a
+/// recomendada do console.
+pub const PALETTE_FLAG: &str = "--palette";
 
 /// Núcleo que roda jogos deste console, se houver.
 pub fn system_for(console_id: &str) -> Option<System> {
@@ -123,7 +126,9 @@ fn play_command(exe: &Path, rom: &Path, options: &LaunchOptions) -> Command {
         .arg(KEYS_FLAG)
         .arg(options.bindings.to_arg())
         .arg(SCALER_FLAG)
-        .arg(options.image.scaler.id());
+        .arg(options.image.scaler.id())
+        .arg(PALETTE_FLAG)
+        .arg(options.image.palette.id());
     if let Some(state) = &options.state_path {
         command.arg(STATE_FLAG).arg(state);
     }
@@ -305,7 +310,9 @@ pub(crate) mod tests {
                 KEYS_FLAG,
                 keys.as_str(),
                 SCALER_FLAG,
-                "epx"
+                "epx",
+                PALETTE_FLAG,
+                "core"
             ]
         );
         let with_state = LaunchOptions {
@@ -324,6 +331,8 @@ pub(crate) mod tests {
                 keys.as_str(),
                 SCALER_FLAG,
                 "epx",
+                PALETTE_FLAG,
+                "core",
                 STATE_FLAG,
                 "/dados/sonic.state",
                 BATTERY_FLAG,
@@ -346,7 +355,10 @@ pub(crate) mod tests {
             image: ImageSettings::ORIGINAL,
             ..options()
         };
-        assert_eq!(args(&plain)[6..8], [SCALER_FLAG, "nearest"]);
+        assert_eq!(
+            args(&plain)[6..10],
+            [SCALER_FLAG, "nearest", PALETTE_FLAG, "core"]
+        );
     }
 
     #[test]

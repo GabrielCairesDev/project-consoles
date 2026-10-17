@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use player::controls::{Bindings, SUPPORTED_KEYS, System};
-use player::image::{ImageSettings, Scaler};
+use player::image::{ImageSettings, Palette, Scaler};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
@@ -94,6 +94,8 @@ pub struct ConsoleInfo {
 #[derive(Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageInfo {
+    /// Paletas do console ([`Palette::id`]), na ordem de exibição.
+    palettes: Vec<&'static str>,
     /// Ampliações do console ([`Scaler::id`]), na ordem de exibição.
     scalers: Vec<&'static str>,
     /// Presets, para a interface reconhecer o atual.
@@ -104,6 +106,7 @@ pub struct ImageInfo {
 impl ImageInfo {
     fn for_system(system: System) -> Self {
         Self {
+            palettes: Palette::available(system).iter().map(|p| p.id()).collect(),
             scalers: Scaler::available(system).iter().map(|s| s.id()).collect(),
             original: ImageSettings::ORIGINAL.into(),
             recommended: ImageSettings::recommended(system).into(),
@@ -852,13 +855,17 @@ mod tests {
         let ps1 = find("playstation");
         assert!(ps1.supported && ps1.playable && ps1.needs_bios && !ps1.resumable);
         let ps1_image = ps1.image.as_ref().expect("imagem do PS1");
-        assert_eq!(ps1_image.scalers, ["nearest", "bilinear"]);
+        assert_eq!(ps1_image.scalers, ["nearest", "bilinear", "sharp-bilinear"]);
+        assert_eq!(ps1_image.palettes, ["core"]);
         assert_eq!(ps1_image.recommended.scaler.as_deref(), Some("bilinear"));
         assert_eq!(ps1_image.original.scaler.as_deref(), Some("nearest"));
         let sms = find("master-system");
         assert!(sms.playable && !sms.needs_bios && sms.resumable);
         let sms_image = sms.image.as_ref().expect("imagem do Master System");
-        assert_eq!(sms_image.scalers, ["nearest", "epx"]);
+        assert_eq!(sms_image.scalers, ["nearest", "epx", "sharp-bilinear"]);
+        let gb_image = find("game-boy").image.as_ref().expect("imagem do Game Boy");
+        assert_eq!(gb_image.palettes, ["core", "dmg", "pocket"]);
+        assert_eq!(gb_image.recommended.palette.as_deref(), Some("dmg"));
         assert_eq!(sms_image.recommended.scaler.as_deref(), Some("epx"));
         let ps2 = find("playstation-2");
         assert!(!ps2.playable && !ps2.needs_bios && !ps2.resumable);

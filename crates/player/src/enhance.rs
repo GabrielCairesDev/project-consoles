@@ -124,6 +124,69 @@ pub fn taps(len: usize, out: usize, taps: &mut Vec<Tap>) {
     }));
 }
 
+/// Como [`taps`], mas "sharp-bilinear": cada pixel de origem ocupa um bloco
+/// do tamanho da escala inteira (vizinho mais próximo) e só a faixa entre
+/// blocos é interpolada. Em escala inteira é idêntico ao vizinho mais
+/// próximo; fora dela, os pixels ficam do mesmo tamanho sem tremer.
+pub fn sharp_taps(len: usize, out: usize, taps: &mut Vec<Tap>) {
+    taps.clear();
+    if len == 0 || out == 0 {
+        return;
+    }
+    // Calculado uma vez por tamanho de janela, não por pixel: f64 basta.
+    let scale = (out / len).max(1) as f64;
+    let region = 0.5 - 0.5 / scale;
+    let last = len - 1;
+    taps.extend((0..out).map(|i| {
+        let texel = (2 * i + 1) as f64 * len as f64 / (2 * out) as f64;
+        let center = texel.floor();
+        let offset = texel - center - 0.5;
+        let sharpened = (offset - offset.clamp(-region, region)) * scale + 0.5;
+        // Posição a amostrar, em coordenadas de centro de pixel.
+        let pos = (center + sharpened - 0.5).max(0.0);
+        let first = (pos.floor() as usize).min(last);
+        let weight = ((pos - pos.floor()) * 256.0).round() as u32;
+        match weight {
+            _ if first == last => Tap {
+                first,
+                second: first,
+                weight: 0,
+            },
+            256 => Tap {
+                first: first + 1,
+                second: (first + 2).min(last),
+                weight: 0,
+            },
+            _ => Tap {
+                first,
+                second: first + 1,
+                weight,
+            },
+        }
+    }));
+}
+
+/// Troca cada cor de `from` pela de mesma posição em `to` (etapa de cor);
+/// as outras passam iguais. Copia `frame` de `src` (linhas de `stride`)
+/// para `dst`, sem folga entre as linhas.
+pub fn recolor(
+    src: &[u32],
+    stride: usize,
+    (w, h): (usize, usize),
+    from: &[u32; 4],
+    to: &[u32; 4],
+    dst: &mut Vec<u32>,
+) {
+    dst.clear();
+    for row in src.chunks(stride).take(h) {
+        dst.extend(row[..w].iter().map(|&px| {
+            from.iter()
+                .position(|&shade| shade == px)
+                .map_or(px, |i| to[i])
+        }));
+    }
+}
+
 /// Mistura `a` e `b` com o peso `w` (0..=256) em `b`, canal a canal.
 #[inline]
 pub fn lerp(a: u32, b: u32, w: u32) -> u32 {
@@ -250,6 +313,54 @@ mod tests {
         taps(2, 4, &mut out);
         let weights: Vec<_> = out.iter().map(|t| (t.first, t.second, t.weight)).collect();
         assert_eq!(weights, [(0, 1, 0), (0, 1, 64), (0, 1, 192), (1, 1, 0)]);
+    }
+
+    #[test]
+    fn sharp_taps_match_nearest_at_integer_scales() {
+        let mut out = Vec::new();
+        for (len, k) in [(2, 1), (2, 3), (5, 4), (160, 6)] {
+            sharp_taps(len, len * k, &mut out);
+            for (i, tap) in out.iter().enumerate() {
+                assert_eq!((tap.first, tap.weight), (i / k, 0), "{len}×{k}, pixel {i}");
+            }
+        }
+    }
+
+    #[test]
+    fn sharp_taps_blend_only_between_blocks() {
+        // 2 → 5: escala inteira 2, sobra meio pixel; só a divisa mistura.
+        let mut out = Vec::new();
+        sharp_taps(2, 5, &mut out);
+        let blend: Vec<_> = out.iter().map(|t| (t.first, t.weight)).collect();
+        assert_eq!(blend, [(0, 0), (0, 0), (0, 128), (1, 0), (1, 0)]);
+        // Abaixo de 2×, vira bilinear comum.
+        let mut plain = Vec::new();
+        taps(2, 3, &mut plain);
+        sharp_taps(2, 3, &mut out);
+        assert_eq!(out, plain);
+        // Nunca lê fora da linha, nem reduzindo.
+        for (len, n) in [(7, 3), (1, 9), (3, 1), (256, 1919)] {
+            sharp_taps(len, n, &mut out);
+            assert_eq!(out.len(), n);
+            assert!(
+                out.iter()
+                    .all(|t| t.first < len && t.second < len && t.weight < 256)
+            );
+        }
+    }
+
+    #[test]
+    fn recolor_swaps_only_the_listed_shades() {
+        let from = [10, 20, 30, 40];
+        let to = [1, 2, 3, 4];
+        // 2×2 com folga de 1 pixel por linha (stride 3); 99 não é um tom.
+        let src = [40, 10, 7, 99, 20, 7];
+        let mut dst = Vec::new();
+        recolor(&src, 3, (2, 2), &from, &to, &mut dst);
+        assert_eq!(dst, [4, 1, 99, 2]);
+        // Reaproveita o buffer sem sobras do quadro anterior.
+        recolor(&[30], 1, (1, 1), &from, &to, &mut dst);
+        assert_eq!(dst, [3]);
     }
 
     #[test]

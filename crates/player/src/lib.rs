@@ -229,7 +229,7 @@ pub fn run(
         mono_scratch: Vec::new(),
         context,
         window: None,
-        renderer: video::Renderer::new(image.scaler),
+        renderer: video::Renderer::new(image),
         bindings,
         state_path,
         battery_path,

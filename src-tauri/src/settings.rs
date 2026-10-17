@@ -6,7 +6,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use player::controls::{BindingError, Bindings, System};
-use player::image::{ImageSettings, Scaler};
+use player::image::{ImageSettings, Palette, Scaler};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,13 +79,70 @@ impl From<StoredConsoleSettings> for ConsoleSettings {
 #[serde(rename_all = "camelCase", default)]
 pub struct ImageChoices {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub palette: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub scaler: Option<String>,
 }
 
 impl From<ImageSettings> for ImageChoices {
     fn from(image: ImageSettings) -> Self {
         Self {
+            palette: Some(image.palette.id().to_owned()),
             scaler: Some(image.scaler.id().to_owned()),
+        }
+    }
+}
+
+/// Uma técnica de imagem do player, vista pelos ids gravados.
+struct Technique<T: 'static> {
+    /// Nome para mensagens ("a ampliação", "a paleta").
+    name: &'static str,
+    from_id: fn(&str) -> Option<T>,
+    available: fn(System) -> &'static [T],
+}
+
+const PALETTE: Technique<Palette> = Technique {
+    name: "a paleta",
+    from_id: Palette::from_id,
+    available: Palette::available,
+};
+
+const SCALER: Technique<Scaler> = Technique {
+    name: "a ampliação",
+    from_id: Scaler::from_id,
+    available: Scaler::available,
+};
+
+impl<T: Copy + PartialEq> Technique<T> {
+    /// O valor de `id`, se ele existir no console.
+    fn find(&self, system: System, id: &str) -> Option<T> {
+        (self.from_id)(id).filter(|value| (self.available)(system).contains(value))
+    }
+
+    /// Escolha gravada; ausente ou inválida vale `recommended` (inválida,
+    /// com aviso).
+    fn resolve(&self, system: System, stored: Option<&str>, recommended: T) -> T {
+        let Some(id) = stored else {
+            return recommended;
+        };
+        self.find(system, id).unwrap_or_else(|| {
+            eprintln!(
+                "{} gravada para {} não existe ({id}); usando a recomendada",
+                self.name,
+                system.id()
+            );
+            recommended
+        })
+    }
+
+    fn check(&self, system: System, stored: Option<&str>) -> Result<(), String> {
+        match stored {
+            Some(id) if self.find(system, id).is_none() => {
+                let mut name = self.name.to_owned();
+                name[..1].make_ascii_uppercase();
+                Err(format!("{name} \"{id}\" não existe para este console."))
+            }
+            _ => Ok(()),
         }
     }
 }
@@ -96,35 +153,18 @@ impl ImageChoices {
     /// Recomendado, com aviso; as outras escolhas são mantidas.
     pub fn resolve(&self, system: System) -> ImageSettings {
         let recommended = ImageSettings::recommended(system);
-        let scaler = match self.scaler.as_deref() {
-            None => recommended.scaler,
-            Some(id) => scaler_for(system, id).unwrap_or_else(|| {
-                eprintln!(
-                    "ampliação gravada inválida para {} ({id}); usando a recomendada",
-                    system.id()
-                );
-                recommended.scaler
-            }),
-        };
-        ImageSettings { scaler }
+        ImageSettings {
+            palette: PALETTE.resolve(system, self.palette.as_deref(), recommended.palette),
+            scaler: SCALER.resolve(system, self.scaler.as_deref(), recommended.scaler),
+        }
     }
 
     /// Confere escolhas vindas da interface: qualquer valor que não exista
     /// no console é recusado, sem gravar nada.
     pub fn check(&self, system: System) -> Result<(), String> {
-        if let Some(id) = self.scaler.as_deref()
-            && scaler_for(system, id).is_none()
-        {
-            return Err(format!(
-                "A ampliação \"{id}\" não existe para este console."
-            ));
-        }
-        Ok(())
+        PALETTE.check(system, self.palette.as_deref())?;
+        SCALER.check(system, self.scaler.as_deref())
     }
-}
-
-fn scaler_for(system: System, id: &str) -> Option<Scaler> {
-    Scaler::from_id(id).filter(|scaler| Scaler::available(system).contains(scaler))
 }
 
 impl Settings {
@@ -313,6 +353,19 @@ mod tests {
     }
 
     #[test]
+    fn each_stored_choice_resolves_on_its_own() {
+        let stored: ConsoleSettings =
+            serde_json::from_str(r#"{ "image": { "palette": "pocket", "scaler": "nao-existe" } }"#)
+                .expect("json");
+        let image = stored.image.resolve(System::GameBoy);
+        assert_eq!(image.palette, Palette::Pocket, "a escolha válida é mantida");
+        assert_eq!(
+            image.scaler,
+            ImageSettings::recommended(System::GameBoy).scaler
+        );
+    }
+
+    #[test]
     fn invalid_stored_choice_falls_back_to_recommended() {
         for id in ["xbrz-de-outra-versao", "bilinear"] {
             let stored: ConsoleSettings = serde_json::from_str(&format!(
@@ -332,13 +385,23 @@ mod tests {
     fn choices_from_the_interface_are_checked_per_console() {
         let epx = ImageChoices {
             scaler: Some("epx".to_owned()),
+            ..ImageChoices::default()
         };
         assert_eq!(epx.check(System::GameBoy), Ok(()));
         assert!(epx.check(System::PlayStation).is_err());
         let unknown = ImageChoices {
             scaler: Some("xbrz".to_owned()),
+            ..ImageChoices::default()
         };
-        assert!(unknown.check(System::GameBoy).is_err());
+        let error = unknown.check(System::GameBoy).expect_err("desconhecida");
+        assert_eq!(error, "A ampliação \"xbrz\" não existe para este console.");
+        let green = ImageChoices {
+            palette: Some("dmg".to_owned()),
+            ..ImageChoices::default()
+        };
+        assert_eq!(green.check(System::GameBoy), Ok(()));
+        let error = green.check(System::Genesis).expect_err("sem paletas");
+        assert_eq!(error, "A paleta \"dmg\" não existe para este console.");
         assert_eq!(ImageChoices::default().check(System::PlayStation), Ok(()));
     }
 
