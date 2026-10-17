@@ -275,7 +275,7 @@ describe("SettingsDialog", () => {
       kind: "handheld",
       image: {
         palettes: ["core", "dmg", "pocket"],
-        scalers: ["nearest", "epx", "sharp-bilinear"],
+        scalers: ["nearest", "epx", "mmpx", "sharp-bilinear"],
         original: { palette: "core", scaler: "nearest" },
         recommended: { palette: "dmg", scaler: "epx" },
       },
@@ -297,6 +297,9 @@ describe("SettingsDialog", () => {
         name: "Pixels uniformes",
       }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Traço preservado" })).toHaveAccessibleDescription(
+      /MMPX/,
+    );
 
     cleanup();
     render(<Harness />);

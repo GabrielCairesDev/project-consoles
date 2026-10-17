@@ -13,6 +13,7 @@ pub mod controls;
 mod enhance;
 pub mod image;
 mod machine;
+mod mmpx;
 mod resample;
 mod ring;
 mod rom;

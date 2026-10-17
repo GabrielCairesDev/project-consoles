@@ -8,6 +8,7 @@
 
 use crate::enhance::{self, Tap};
 use crate::image::{ImageSettings, Scaler};
+use crate::mmpx;
 
 /// Tons que o núcleo do Game Boy desenha; a [`Palette`](crate::image::Palette) os substitui.
 const CORE_SHADES: [u32; 4] = gameboy::SHADES;
@@ -56,6 +57,23 @@ fn visible(rect: Layout, window: (usize, usize)) -> (usize, usize) {
         rect.width.min(window.0.saturating_sub(rect.x)),
         rect.height.min(window.1.saturating_sub(rect.y)),
     )
+}
+
+/// Pinta de preto só o que fica fora da parte visível de `rect` (as
+/// barras). Todo filtro escreve cada pixel visível de `rect`, então pintar
+/// o quadro inteiro antes seria escrever a maior parte da janela duas vezes.
+fn clear_bars(dst: &mut [u32], window: (usize, usize), rect: Layout) {
+    let (visible_w, visible_h) = visible(rect, window);
+    let left = rect.x.min(window.0);
+    let right = left + visible_w;
+    let top = rect.y.min(window.1);
+    let bottom = top + visible_h;
+    dst[..top * window.0].fill(0);
+    for row in dst[top * window.0..bottom * window.0].chunks_exact_mut(window.0) {
+        row[..left].fill(0);
+        row[right..].fill(0);
+    }
+    dst[bottom * window.0..].fill(0);
 }
 
 /// Desenha `src` em `rect` por vizinho mais próximo (o fundo já está pronto).
@@ -139,11 +157,12 @@ impl Renderer {
         dst: &mut [u32],
         window: (usize, usize),
     ) {
-        dst.fill(0);
         let rect = layout(window, frame, aspect);
         if frame.0 == 0 || frame.1 == 0 || rect.width == 0 || rect.height == 0 {
+            dst.fill(0);
             return;
         }
+        clear_bars(dst, window, rect);
         // Etapa de cor: o quadro recolorido vira a origem da ampliação. O
         // buffer sai de `self` durante o desenho e volta depois, para ser
         // reaproveitado no próximo quadro.
@@ -158,6 +177,7 @@ impl Renderer {
         match self.scaler {
             Scaler::Nearest => nearest(src, stride, frame, rect, dst, window),
             Scaler::Epx => self.pixel_art(src, stride, frame, rect, dst, window),
+            Scaler::Mmpx => self.mmpx(src, stride, frame, rect, dst, window),
             Scaler::Bilinear => {
                 enhance::taps(frame.0, rect.width, &mut self.columns);
                 enhance::taps(frame.1, rect.height, &mut self.rows);
@@ -201,8 +221,36 @@ impl Renderer {
         nearest(&self.scaled, size.0, size, rect, dst, window);
     }
 
-    /// Bilinear separável: cada linha de origem é interpolada uma vez na
-    /// horizontal, e cada linha da janela mistura duas delas.
+    /// MMPX só amplia 2×: escala 2 ou 3 usa uma passada; 4 ou mais, duas
+    /// (4×). O que sobra até a janela é por vizinho mais próximo, como no
+    /// EPX quando o fator não divide a escala.
+    fn mmpx(
+        &mut self,
+        src: &[u32],
+        stride: usize,
+        frame: (usize, usize),
+        rect: Layout,
+        dst: &mut [u32],
+        window: (usize, usize),
+    ) {
+        let k = (rect.width / frame.0).min(rect.height / frame.1);
+        if k < 2 {
+            return nearest(src, stride, frame, rect, dst, window);
+        }
+        let double = (2 * frame.0, 2 * frame.1);
+        if k < 4 {
+            self.scaled.resize(double.0 * double.1, 0);
+            mmpx::mmpx2x(src, stride, frame, &mut self.scaled);
+            return nearest(&self.scaled, double.0, double, rect, dst, window);
+        }
+        let quad = (4 * frame.0, 4 * frame.1);
+        self.pass.resize(double.0 * double.1, 0);
+        self.scaled.resize(quad.0 * quad.1, 0);
+        mmpx::mmpx2x(src, stride, frame, &mut self.pass);
+        mmpx::mmpx2x(&self.pass, double.0, double, &mut self.scaled);
+        nearest(&self.scaled, quad.0, quad, rect, dst, window);
+    }
+
     /// Interpolação separável (linhas, depois colunas) com as amostras já
     /// calculadas em `columns` e `rows`: bilinear comum ou sharp-bilinear.
     fn interpolate(
@@ -318,6 +366,46 @@ mod tests {
     }
 
     #[test]
+    fn every_pixel_is_written_whatever_was_in_the_window() {
+        // Pintar só as barras exige que os filtros escrevam todo o retângulo:
+        // o resultado sobre lixo tem que ser igual ao resultado sobre preto.
+        let src: Vec<u32> = (0..7 * 5)
+            .map(|i| (i * 0x0102_0304) & 0x00FF_FFFF)
+            .collect();
+        let windows = [(7, 5), (20, 11), (31, 40), (64, 23), (5, 3), (3, 2)];
+        let aspects = [None, Some((4, 3)), Some((1, 3))];
+        for scaler in Scaler::ALL {
+            let mut renderer = Renderer::new(ImageSettings {
+                scaler,
+                ..ImageSettings::ORIGINAL
+            });
+            for window in windows {
+                for aspect in aspects {
+                    let mut black = vec![0; window.0 * window.1];
+                    renderer.draw(&src, 7, (7, 5), aspect, &mut black, window);
+                    let mut garbage = vec![0xAB_CDEF; window.0 * window.1];
+                    renderer.draw(&src, 7, (7, 5), aspect, &mut garbage, window);
+                    assert_eq!(garbage, black, "{scaler:?} {window:?} {aspect:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mmpx_runs_once_or_twice_by_scale() {
+        // Diagonal com detalhe; 2× e 3× usam uma passada, 4× usa duas.
+        let src = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+        let mut once = vec![0; 36];
+        mmpx::mmpx2x(&src, 3, (3, 3), &mut once);
+        assert_eq!(draw(Scaler::Mmpx, &src, 3, (3, 3), None, (6, 6)), once);
+        let mut twice = vec![0; 144];
+        mmpx::mmpx2x(&once, 6, (6, 6), &mut twice);
+        assert_eq!(draw(Scaler::Mmpx, &src, 3, (3, 3), None, (12, 12)), twice);
+        // Escala 1: o original.
+        assert_eq!(draw(Scaler::Mmpx, &src, 3, (3, 3), None, (3, 3)), src);
+    }
+
+    #[test]
     fn pixel_art_factor_prefers_even_pixels() {
         let factors: Vec<_> = (1..=10).map(pixel_art_factor).collect();
         assert_eq!(factors, [1, 2, 3, 4, 4, 3, 4, 4, 3, 2]);
@@ -351,7 +439,7 @@ mod tests {
     #[test]
     fn enhancements_keep_flat_images_and_unscaled_frames() {
         let flat = [0x123456; 12];
-        for scaler in [Scaler::Epx, Scaler::Bilinear] {
+        for scaler in [Scaler::Epx, Scaler::Mmpx, Scaler::Bilinear] {
             let dst = draw(scaler, &flat, 4, (4, 3), None, (12, 9));
             assert_eq!(dst, vec![0x123456; 108], "{scaler:?}");
         }
@@ -526,6 +614,16 @@ mod tests {
                 (256, 192),
                 frame(256, 192, &rgb),
                 ImageSettings::ORIGINAL,
+                None,
+            ),
+            (
+                "SMS mmpx",
+                (256, 192),
+                frame(256, 192, &rgb),
+                ImageSettings {
+                    scaler: Scaler::Mmpx,
+                    ..ImageSettings::ORIGINAL
+                },
                 None,
             ),
             (

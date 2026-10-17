@@ -17,6 +17,10 @@ pub enum Scaler {
     /// Scale2x/3x/4x (EPX): arredonda contornos sem borrar e sem criar
     /// cores, para pixel art.
     Epx,
+    /// MMPX (McGuire & Gagiu, 2021): reconstrói curvas, diagonais e cantos
+    /// vivos da pixel art, preservando detalhes de um pixel e sem criar
+    /// cores.
+    Mmpx,
     /// Interpolação bilinear: suaviza serrilhado e pontilhado do 3D.
     Bilinear,
     /// Sharp-bilinear: pixels do mesmo tamanho em qualquer escala, só a
@@ -25,9 +29,10 @@ pub enum Scaler {
 }
 
 impl Scaler {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::Nearest,
         Self::Epx,
+        Self::Mmpx,
         Self::Bilinear,
         Self::SharpBilinear,
     ];
@@ -38,6 +43,7 @@ impl Scaler {
         match self {
             Self::Nearest => "nearest",
             Self::Epx => "epx",
+            Self::Mmpx => "mmpx",
             Self::Bilinear => "bilinear",
             Self::SharpBilinear => "sharp-bilinear",
         }
@@ -52,7 +58,7 @@ impl Scaler {
     pub fn available(system: System) -> &'static [Self] {
         match system {
             System::MasterSystem | System::Genesis | System::GameBoy => {
-                &[Self::Nearest, Self::Epx, Self::SharpBilinear]
+                &[Self::Nearest, Self::Epx, Self::Mmpx, Self::SharpBilinear]
             }
             System::PlayStation => &[Self::Nearest, Self::Bilinear, Self::SharpBilinear],
         }
@@ -231,11 +237,18 @@ mod tests {
             .expect_err("bilinear não é oferecida nos 2D");
         assert_eq!(error.value, "bilinear");
         assert!(error.to_string().contains("master-system"));
-        let epx_on_3d = ImageSettings {
-            scaler: Scaler::Epx,
-            ..ImageSettings::ORIGINAL
-        };
-        assert!(epx_on_3d.check(System::PlayStation).is_err());
+        for pixel_art in [Scaler::Epx, Scaler::Mmpx] {
+            let on_3d = ImageSettings {
+                scaler: pixel_art,
+                ..ImageSettings::ORIGINAL
+            };
+            assert!(on_3d.check(System::PlayStation).is_err(), "{pixel_art:?}");
+            let on_2d = ImageSettings {
+                scaler: pixel_art,
+                ..ImageSettings::ORIGINAL
+            };
+            assert!(on_2d.check(System::Genesis).is_ok(), "{pixel_art:?}");
+        }
     }
 
     #[test]

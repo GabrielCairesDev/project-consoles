@@ -1,10 +1,10 @@
 /**
  * Ampliação do quadro; espelha `player::image::Scaler::id`.
  * `nearest`: original, pixel a pixel; `epx`: contornos arredondados para
- * pixel art (2D); `bilinear`: suavização (3D); `sharp-bilinear`: pixels
+ * pixel art (2D); `mmpx`: curvas e cantos da pixel art (2D); `bilinear`: suavização (3D); `sharp-bilinear`: pixels
  * iguais em qualquer escala.
  */
-export type Scaler = "nearest" | "epx" | "bilinear" | "sharp-bilinear";
+export type Scaler = "nearest" | "epx" | "mmpx" | "bilinear" | "sharp-bilinear";
 
 /** Cores da tela; espelha `player::image::Palette::id`. */
 export type Palette = "core" | "dmg" | "pocket";

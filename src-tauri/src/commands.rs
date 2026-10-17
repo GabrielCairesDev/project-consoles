@@ -862,7 +862,10 @@ mod tests {
         let sms = find("master-system");
         assert!(sms.playable && !sms.needs_bios && sms.resumable);
         let sms_image = sms.image.as_ref().expect("imagem do Master System");
-        assert_eq!(sms_image.scalers, ["nearest", "epx", "sharp-bilinear"]);
+        assert_eq!(
+            sms_image.scalers,
+            ["nearest", "epx", "mmpx", "sharp-bilinear"]
+        );
         let gb_image = find("game-boy").image.as_ref().expect("imagem do Game Boy");
         assert_eq!(gb_image.palettes, ["core", "dmg", "pocket"]);
         assert_eq!(gb_image.recommended.palette.as_deref(), Some("dmg"));

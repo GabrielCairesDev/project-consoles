@@ -48,7 +48,8 @@ Referência obrigatória para a regra §13 do `CLAUDE.md`. Vale para os consoles
 | Vizinho mais próximo, escala inteira | pixel perfeito | todos |
 | Sharp-bilinear | escala não inteira sem tremer nem borrar | todos |
 | Scale2x/3x (EPX) | contornos arredondados, sem criar cores | 2D |
-| xBRZ (2–6×) | contornos suaves e limpos | 2D |
+| MMPX (2×, 4× em duas passadas) | curvas, diagonais e cantos vivos, preservando detalhes de um pixel e as cores (licença MIT) | 2D |
+| xBRZ (2–6×) | contornos suaves e limpos; **GPLv3**, não usar sem decisão de licença | 2D |
 | ScaleFX | suave, combina com scanlines | 2D |
 | Bilinear | suavização simples | 3D |
 
@@ -84,7 +85,8 @@ Proporção (original, 4:3, pixels quadrados), escala inteira ou preencher, e co
 | Paleta | — | — | R (verde original) | — |
 | Correção de cor de LCD | — | — | o | — |
 | Scale2x/3x | R | R | R | — |
-| xBRZ / ScaleFX | o | o | o | — |
+| MMPX | o | o | o | — |
+| xBRZ / ScaleFX | — (licença) | — (licença) | — (licença) | — |
 | Sharp-bilinear | o | o | o | o |
 | Bilinear | — | — | — | R |
 | Scanlines / CRT | o | o | — | o |
@@ -95,21 +97,22 @@ Proporção (original, 4:3, pixels quadrados), escala inteira ou preencher, e co
 Ao implementar ou medir uma técnica, atualize esta matriz (custo e estado).
 
 ### 5.1 Estado e custo medido
-Benchmark: `cargo test --release -p player bench_ -- --ignored --nocapture` (`video.rs`). Janela de 2560×1440, média de 120 quadros, faixa de 3 execuções num Mac (Apple Silicon). O custo inclui limpar e preencher a janela inteira, que sozinho já é a linha "Original".
+Benchmark: `cargo test --release -p player bench_ -- --ignored --nocapture` (`video.rs`). Janela de 2560×1440, média de 120 quadros, faixa de 3 execuções num Mac (Apple Silicon). Só as barras fora do quadro são pintadas; o quadro é escrito uma vez pelo filtro.
 
 | Técnica | Estado | Caso medido | ms/quadro |
 |---------|--------|-------------|-----------|
-| Original (vizinho mais próximo) | implementada | SMS 256×192 | 2,4–2,6 |
-| Scale2x/3x (EPX) | implementada | SMS 256×192 | 3,6–3,9 |
-| Sharp-bilinear | implementada | SMS 256×192, 4:3 | 2,5–3,1 |
-| Sharp-bilinear | implementada | PS1 320×240, 4:3 | 2,8–3,2 |
-| Paleta + EPX | implementada | GB 160×144 | 2,5–2,7 |
-| Paleta + sharp-bilinear | implementada | GB 160×144, 10:9 | 2,3–2,7 |
-| Bilinear | implementada, **acima do orçamento** | PS1 640×480, 4:3 | 5,1–5,4 |
+| Original (vizinho mais próximo) | implementada | SMS 256×192 | 0,75–0,91 |
+| Scale2x/3x (EPX) | implementada | SMS 256×192 | 1,15–1,16 |
+| MMPX (4×, duas passadas) | implementada | SMS 256×192 | 2,62–2,63 |
+| Sharp-bilinear | implementada | SMS 256×192, 4:3 | 0,65–0,67 |
+| Sharp-bilinear | implementada | PS1 320×240, 4:3 | 0,70–0,71 |
+| Paleta + EPX | implementada | GB 160×144 | 0,79–0,81 |
+| Paleta + sharp-bilinear | implementada | GB 160×144, 10:9 | 0,49–0,50 |
+| Bilinear | implementada | PS1 640×480, 4:3 | 1,29–1,30 |
 | Resolução interna 2× | em outro branch (`claude/gifted-gates-6ae501`) | — | — |
 | Demais | não implementadas | — | — |
 
-Pendência: a bilinear do PS1 em 640×480 passa dos 4 ms. Ela precisa ser otimizada antes de continuar como Recomendado nessa resolução, ou o Recomendado do PS1 muda para sharp-bilinear (decisão do usuário).
+Histórico: antes de pintar só as barras, a janela inteira era limpa e reescrita, e a bilinear do PS1 em 640×480 custava 5,1–5,4 ms (acima do orçamento).
 
 ## 6. Configurações salvas
 - Ficam por console em `ConsoleSettings.image` (`ImageChoices`), com uma escolha por técnica, gravada pelo id estável do player (`player::image`). Escolha ausente vale o Recomendado. O preset não é gravado: ele é deduzido comparando as escolhas com Original e Recomendado.

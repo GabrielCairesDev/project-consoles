@@ -29,6 +29,11 @@ const SCALER_CHOICE: Record<Scaler, Omit<Choice<Scaler>, "value">> = {
     label: "Contornos suaves",
     description: "Arredonda as bordas da pixel art sem borrar nem criar cores (Scale2x).",
   },
+  mmpx: {
+    label: "Traço preservado",
+    description:
+      "Reconstrói curvas, diagonais e cantos vivos mantendo detalhes de um pixel e as cores (MMPX).",
+  },
   bilinear: {
     label: "Suavizada",
     description: "Suaviza o serrilhado e o pontilhado dos gráficos 3D.",
