@@ -8,7 +8,7 @@ Referência obrigatória para a regra §13 do `CLAUDE.md`. Vale para os consoles
 - O padrão é o preset **Recomendado** do console. O preset **Original** (pixel a pixel, sem nenhuma etapa) está sempre disponível.
 - Presets só preenchem as opções. Se o usuário mudar uma opção, o preset passa a **Personalizado** e nada do que ele escolheu é sobrescrito sem ele pedir.
 - "Restaurar recomendado" volta o console ao padrão.
-- Durante o jogo, um atalho alterna entre Original e a configuração atual, para comparar.
+- Durante o jogo, F1 alterna entre Original e a configuração atual, para comparar (só na sessão; nada é gravado). F1 e Esc ficam fora das teclas mapeáveis do controle.
 
 ## 2. Pipeline em etapas (ordem fixa)
 | # | Etapa | Onde roda | O que pode mudar |

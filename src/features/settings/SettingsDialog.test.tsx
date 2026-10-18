@@ -174,6 +174,7 @@ describe("SettingsDialog", () => {
 
     const presets = await screen.findByRole("radiogroup", { name: "Predefinição" });
     expect(presets).toHaveAccessibleDescription(/próximo jogo/);
+    expect(presets).toHaveAccessibleDescription(/F1 alterna/);
     expect(screen.getByRole("radio", { name: "Recomendado" })).toBeChecked();
     expect(within(presets).getByRole("radio", { name: "Original" })).not.toBeChecked();
     const smooth = screen.getByRole("radio", { name: "Contornos suaves" });

@@ -6,7 +6,8 @@
 //! um travamento aqui não derruba a biblioteca.
 //!
 //! Controles: configuráveis por [`controls::Bindings`], com padrões por
-//! console. Esc sempre fecha o jogo.
+//! console. Esc sempre fecha o jogo e F1 alterna entre a imagem original e
+//! a configurada ([`COMPARE_KEY`]); nenhuma das duas pode ser mapeada.
 
 mod audio;
 pub mod controls;
@@ -37,6 +38,11 @@ use controls::Bindings;
 use image::{ImageError, ImageSettings};
 use machine::{Machine, MachineError};
 use rom::RomReadError;
+
+/// Tecla que alterna, durante o jogo, entre a imagem original e a
+/// configurada pelo usuário. Fora de [`controls::SUPPORTED_KEYS`], então
+/// nunca colide com o controle.
+pub const COMPARE_KEY: KeyCode = KeyCode::F1;
 
 /// Taxa usada quando não há áudio: os chips precisam de alguma taxa de saída.
 const FALLBACK_SAMPLE_RATE: u32 = 44_100;
@@ -231,6 +237,7 @@ pub fn run(
         context,
         window: None,
         renderer: video::Renderer::new(image),
+        comparison: Comparison::new(image, ImageSettings::original(system)),
         bindings,
         state_path,
         battery_path,
@@ -275,6 +282,7 @@ struct App {
     context: softbuffer::Context<OwnedDisplayHandle>,
     window: Option<GameWindow>,
     renderer: video::Renderer,
+    comparison: Comparison,
     bindings: Bindings,
     state_path: Option<PathBuf>,
     battery_path: Option<PathBuf>,
@@ -361,11 +369,58 @@ impl App {
             KeyCode::Escape if pressed => event_loop.exit(),
             // Repetição do teclado não aperta de novo (o Pause é uma borda).
             _ if event.repeat => {}
+            COMPARE_KEY => {
+                if pressed {
+                    self.renderer = video::Renderer::new(self.comparison.toggle());
+                    if let Some(game) = &self.window {
+                        game.window.set_title(&self.comparison.title(&self.title));
+                        game.window.request_redraw();
+                    }
+                }
+            }
             _ => {
                 if let Some(action) = self.bindings.action_for(code) {
                     self.machine.set_action(action, pressed);
                 }
             }
+        }
+    }
+}
+
+/// Alternância entre a imagem configurada e a original (tecla
+/// [`COMPARE_KEY`]), só durante esta sessão de jogo: nada é gravado.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Comparison {
+    chosen: ImageSettings,
+    original: ImageSettings,
+    showing_original: bool,
+}
+
+impl Comparison {
+    fn new(chosen: ImageSettings, original: ImageSettings) -> Self {
+        Self {
+            chosen,
+            original,
+            showing_original: false,
+        }
+    }
+
+    /// Troca o que aparece e devolve a configuração a desenhar.
+    fn toggle(&mut self) -> ImageSettings {
+        self.showing_original = !self.showing_original;
+        if self.showing_original {
+            self.original
+        } else {
+            self.chosen
+        }
+    }
+
+    /// Título da janela, avisando quando a imagem mostrada é a original.
+    fn title(&self, game: &str) -> String {
+        if self.showing_original {
+            format!("{game} — imagem original (F1 volta)")
+        } else {
+            game.to_owned()
         }
     }
 }
@@ -502,6 +557,30 @@ impl ApplicationHandler for App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compare_key_alternates_without_touching_the_choice() {
+        let chosen = ImageSettings::recommended(controls::System::GameBoy);
+        let original = ImageSettings::original(controls::System::GameBoy);
+        let mut comparison = Comparison::new(chosen, original);
+        assert_eq!(comparison.title("Tetris"), "Tetris");
+        assert_eq!(comparison.toggle(), original);
+        assert_eq!(
+            comparison.title("Tetris"),
+            "Tetris — imagem original (F1 volta)"
+        );
+        assert_eq!(comparison.toggle(), chosen);
+        assert_eq!(comparison.title("Tetris"), "Tetris");
+    }
+
+    #[test]
+    fn compare_key_can_never_be_bound_to_the_controller() {
+        assert!(
+            controls::SUPPORTED_KEYS
+                .iter()
+                .all(|&(_, key)| key != COMPARE_KEY && key != KeyCode::Escape)
+        );
+    }
     use controls::System;
 
     fn sms_machine(rom: Vec<u8>) -> Machine {

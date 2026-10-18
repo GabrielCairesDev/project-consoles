@@ -158,7 +158,7 @@ export function ImageSection({ image, choices, disabled, onChange }: ImageSectio
       </h3>
       <ChoiceGroup
         label="Predefinição"
-        description="Valem a partir do próximo jogo aberto. Original mostra a imagem pixel a pixel."
+        description="Valem a partir do próximo jogo aberto. Original mostra a imagem pixel a pixel; durante o jogo, a tecla F1 alterna entre ela e a sua escolha."
         variant="segmented"
         choices={presetChoices}
         value={preset}
