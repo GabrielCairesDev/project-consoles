@@ -90,6 +90,7 @@ O projeto deve funcionar em macOS, Windows e Linux.
 - Documente APIs públicas com Rustdoc; explique decisões arquiteturais, invariantes não óbvias e decisões de performance que aumentem complexidade.
 - Atualize documentação, exemplos e testes ao alterar contratos; não mantenha documentação desatualizada.
 - Evite comentários que repetem o código; comente o porquê.
+- O `README.md` mostra o estado atual do projeto: o que funciona por console, como rodar, verificar e a estrutura. Só informações importantes; nada de histórico, changelog ou "o que mudou". Antes de cada commit, confira se a mudança altera algo do README e, se alterar, atualize-o no mesmo commit.
 
 ## 11. Protocolo de trabalho
 Antes: inspecione a estrutura do projeto, leia os arquivos relevantes, identifique requisitos/restrições/efeitos colaterais, determine os testes, avalie riscos e proponha a solução mais simples.
