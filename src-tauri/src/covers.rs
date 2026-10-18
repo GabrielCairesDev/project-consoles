@@ -2,9 +2,11 @@
 //!
 //! Ordem de resolução:
 //! 1. capa de caixa já em cache;
-//! 2. download do acervo libretro-thumbnails (pelo nome No-Intro). Quando a
-//!    capa não existe lá, um marcador evita perguntar de novo. Sem rede, nada
-//!    é marcado e a próxima abertura tenta outra vez;
+//! 2. download do acervo libretro-thumbnails (pelo nome No-Intro; em discos,
+//!    que não têm DAT embutido, pelo nome do arquivo, que segue o Redump
+//!    usado pelo acervo). Quando a capa não existe lá, um marcador evita
+//!    perguntar de novo. Sem rede, nada é marcado e a próxima abertura tenta
+//!    outra vez;
 //! 3. ícone embutido na ROM (Nintendo DS), convertido para PNG.
 
 use std::fs::{self, File};
@@ -126,6 +128,22 @@ fn percent_encode(segment: &str) -> String {
     out
 }
 
+/// Nome do jogo no acervo de capas: o No-Intro reconhecido ou, em sistemas
+/// sem DAT embutido (discos), o nome do arquivo sem a extensão, como
+/// "Crash Bandicoot (USA)". Um cartucho não reconhecido não tem nome lá.
+fn archive_name(system: &System, game: &Game) -> Option<String> {
+    if let Some(name) = &game.no_intro_name {
+        return Some(name.clone());
+    }
+    if system.has_dat() {
+        return None;
+    }
+    Path::new(&game.file_name)
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .filter(|stem| !stem.trim().is_empty())
+}
+
 /// Cache de capas em `root/<sistema>/`.
 pub struct CoverStore {
     root: PathBuf,
@@ -144,8 +162,8 @@ impl CoverStore {
     ) -> io::Result<Option<Cover>> {
         let dir = self.root.join(libretro_file_name(system.libretro_name));
 
-        if let Some(name) = &game.no_intro_name {
-            let file_name = libretro_file_name(name);
+        if let Some(name) = archive_name(system, game) {
+            let file_name = libretro_file_name(&name);
             let boxart = dir.join(format!("{file_name}.png"));
             if boxart.is_file() {
                 return Ok(Some(Cover {
@@ -308,6 +326,8 @@ mod tests {
     struct FakeSource {
         response: fn() -> Fetched,
         calls: Cell<usize>,
+        /// Última consulta: (sistema, nome do arquivo).
+        last: std::cell::RefCell<Option<(String, String)>>,
     }
 
     impl FakeSource {
@@ -315,13 +335,15 @@ mod tests {
             Self {
                 response,
                 calls: Cell::new(0),
+                last: std::cell::RefCell::new(None),
             }
         }
     }
 
     impl BoxartSource for FakeSource {
-        fn fetch(&self, _system: &str, _file_name: &str) -> Fetched {
+        fn fetch(&self, system: &str, file_name: &str) -> Fetched {
             self.calls.set(self.calls.get() + 1);
+            *self.last.borrow_mut() = Some((system.to_owned(), file_name.to_owned()));
             (self.response)()
         }
     }
@@ -427,6 +449,52 @@ mod tests {
         assert_eq!(store.resolve(gb, &g2, &offline).expect("resolve"), None);
         assert_eq!(store.resolve(gb, &g2, &offline).expect("resolve"), None);
         assert_eq!(offline.calls.get(), 2);
+    }
+
+    #[test]
+    fn discs_look_up_the_archive_by_file_name() {
+        let root = tempfile::tempdir().expect("cache");
+        let store = CoverStore::new(root.path());
+        let ps1 = systems::for_console("playstation").expect("PS1");
+        let source = FakeSource::new(fake_png);
+        let crash = Game {
+            console_id: "playstation".into(),
+            ..game(PathBuf::from("/x/Crash Bandicoot (USA).cue"), None)
+        };
+
+        let cover = store
+            .resolve(ps1, &crash, &source)
+            .expect("resolve")
+            .expect("capa");
+        assert_eq!(cover.kind, CoverKind::Boxart);
+        assert_eq!(
+            source.last.borrow().clone(),
+            Some((
+                "Sony - PlayStation".to_owned(),
+                "Crash Bandicoot (USA)".to_owned()
+            ))
+        );
+        assert!(
+            cover
+                .path
+                .ends_with("Sony - PlayStation/Crash Bandicoot (USA).png")
+        );
+        // Depois vem do cache, sem consultar de novo.
+        store.resolve(ps1, &crash, &source).expect("resolve");
+        assert_eq!(source.calls.get(), 1);
+
+        // Nome que o acervo não tem: marcado e não perguntado de novo.
+        let missing = FakeSource::new(|| Fetched::NotFound);
+        let homebrew = game(PathBuf::from("/x/meu disco.cue"), None);
+        assert_eq!(
+            store.resolve(ps1, &homebrew, &missing).expect("resolve"),
+            None
+        );
+        assert_eq!(
+            store.resolve(ps1, &homebrew, &missing).expect("resolve"),
+            None
+        );
+        assert_eq!(missing.calls.get(), 1);
     }
 
     #[test]

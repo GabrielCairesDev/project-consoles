@@ -48,6 +48,12 @@ impl System {
             .get_or_init(|| dat::parse(self.dat.unwrap_or_default()))
     }
 
+    /// `true` se o sistema tem DAT embutido (cartuchos); discos são
+    /// reconhecidos só pela extensão.
+    pub fn has_dat(&self) -> bool {
+        self.dat.is_some()
+    }
+
     /// `true` se a extensão é deste sistema.
     pub fn accepts(&self, extension: &str) -> bool {
         self.extensions
