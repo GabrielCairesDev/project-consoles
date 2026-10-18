@@ -311,6 +311,12 @@ impl Console {
         self.bus.gpu.frame()
     }
 
+    /// Pixels de [`Self::framebuffer`] por pixel do console (a escala da
+    /// resolução interna quando a imagem está ampliada, senão 1).
+    pub fn framebuffer_scale(&self) -> usize {
+        self.bus.gpu.frame_scale()
+    }
+
     /// Troca as melhorias do desenho. Vale a partir do próximo quadro; a
     /// cópia melhorada da VRAM é refeita a partir da VRAM 1× (sem perder o
     /// que já está na tela).

@@ -31,7 +31,7 @@ const SMS: Console = {
   playable: true,
   needsBios: false,
   resumable: true,
-  image: { aspects: ["square"], fits: ["integer"], screens: ["none"], signals: ["rgb"], blends: ["off"], resolutions: ["1x"], colorDepths: ["15-bit"], geometries: ["native"], textures: ["nearest"], palettes: ["core"], scalers: ["nearest", "epx"], original: { scaler: "nearest" }, recommended: { scaler: "epx" } },
+  image: { aspects: ["square"], fits: ["integer"], screens: ["none"], signals: ["rgb"], blends: ["off"], resolutions: ["1x"], colorDepths: ["15-bit"], geometries: ["native"], textures: ["nearest"], gammas: ["neutral"], crops: ["none"], palettes: ["core"], scalers: ["nearest", "epx"], original: { scaler: "nearest" }, recommended: { scaler: "epx" } },
 };
 
 const PS1: Console = {
@@ -42,7 +42,7 @@ const PS1: Console = {
   releaseYear: 1994,
   needsBios: true,
   resumable: false,
-  image: { aspects: ["square"], fits: ["integer"], screens: ["none"], signals: ["rgb"], blends: ["off"], resolutions: ["1x"], colorDepths: ["15-bit"], geometries: ["native"], textures: ["nearest"], palettes: ["core"], scalers: ["nearest", "bilinear"], original: { scaler: "nearest" }, recommended: { scaler: "bilinear" } },
+  image: { aspects: ["square"], fits: ["integer"], screens: ["none"], signals: ["rgb"], blends: ["off"], resolutions: ["1x"], colorDepths: ["15-bit"], geometries: ["native"], textures: ["nearest"], gammas: ["neutral"], crops: ["none"], palettes: ["core"], scalers: ["nearest", "bilinear"], original: { scaler: "nearest" }, recommended: { scaler: "bilinear" } },
 };
 
 function Harness({
@@ -290,6 +290,8 @@ describe("SettingsDialog", () => {
         colorDepths: ["15-bit", "24-bit"],
         geometries: ["native", "precise"],
         textures: ["nearest", "bilinear"],
+        gammas: ["neutral", "crt", "lighter"],
+        crops: ["none", "overscan"],
         palettes: ["core"],
         scalers: ["nearest", "bilinear", "sharp-bilinear"],
         original: { resolution: "1x", colorDepth: "15-bit", geometry: "native", scaler: "nearest" },
@@ -330,6 +332,17 @@ describe("SettingsDialog", () => {
       image: { ...recommended, resolution: "4x", geometry: "precise", texture: "bilinear" },
     });
 
+    await waitFor(() =>
+      expect(within(texture).getByRole("radio", { name: "Suavizada" })).not.toBeDisabled(),
+    );
+    const borders = screen.getByRole("radiogroup", { name: "Bordas" });
+    fireEvent.click(within(borders).getByRole("radio", { name: "Cortar overscan" }));
+    expect(saveMock).toHaveBeenLastCalledWith("playstation", {
+      resume: true,
+      image: { ...recommended, resolution: "4x", geometry: "precise", texture: "bilinear", crop: "overscan" },
+    });
+    expect(screen.getByRole("radiogroup", { name: "Brilho" })).toBeInTheDocument();
+
     cleanup();
     render(<Harness />);
     await screen.findByRole("radiogroup", { name: "Ampliação" });
@@ -352,6 +365,8 @@ describe("SettingsDialog", () => {
         colorDepths: ["15-bit"],
         geometries: ["native"],
         textures: ["nearest"],
+        gammas: ["neutral", "crt", "lighter"],
+        crops: ["none"],
         palettes: ["core", "dmg", "pocket"],
         scalers: ["nearest", "epx", "mmpx", "sharp-bilinear"],
         original: { palette: "core", scaler: "nearest" },

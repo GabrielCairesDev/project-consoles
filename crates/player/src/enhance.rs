@@ -211,20 +211,105 @@ pub fn blend_frames(current: &mut [u32], previous: &[u32]) {
     }
 }
 
+/// Tabela de gama: cada valor de canal (0–255) elevado a `exponent`, com
+/// 0 e 255 fixos.
+pub fn gamma_table(exponent: f64) -> [u8; 256] {
+    std::array::from_fn(|i| ((i as f64 / 255.0).powf(exponent) * 255.0).round() as u8)
+}
+
+/// Pixel com cada canal passado pela tabela de gama.
+#[inline]
+fn gamma_px(px: u32, table: &[u8; 256]) -> u32 {
+    let channel = |shift: u32| u32::from(table[((px >> shift) & 0xFF) as usize]) << shift;
+    channel(16) | channel(8) | channel(0)
+}
+
+/// Passa cada canal de `pixels` pela tabela de gama.
+pub fn apply_gamma(pixels: &mut [u32], table: &[u8; 256]) {
+    for px in pixels {
+        *px = gamma_px(*px, table);
+    }
+}
+
+/// Copia `frame` de `src` (linhas de `stride`) para `dst`, contíguo, já
+/// com o gama: uma passada só sobre o quadro.
+pub fn copy_with_gamma(
+    src: &[u32],
+    stride: usize,
+    (w, h): (usize, usize),
+    table: &[u8; 256],
+    dst: &mut Vec<u32>,
+) {
+    dst.clear();
+    for row in src.chunks(stride).take(h) {
+        dst.extend(row[..w].iter().map(|&px| gamma_px(px, table)));
+    }
+}
+
 /// Sinal composto simplificado: cada pixel mistura 1-2-1 com os vizinhos da
 /// linha, como a banda estreita do vídeo composto. Funde o pontilhado de
 /// colunas alternadas (transparência dos jogos da época) numa cor só.
+/// Os vizinhos ficam a `radius` pixels: um pixel do console, também numa
+/// imagem ampliada pela resolução interna. Com `gamma`, a tabela é aplicada
+/// na mesma passada (o gama da tela vem depois do sinal).
 /// Copia `frame` de `src` (linhas de `stride`) para `dst`, contíguo.
-pub fn composite(src: &[u32], stride: usize, (w, h): (usize, usize), dst: &mut Vec<u32>) {
+pub fn composite(
+    src: &[u32],
+    stride: usize,
+    (w, h): (usize, usize),
+    radius: usize,
+    gamma: Option<&[u8; 256]>,
+    dst: &mut Vec<u32>,
+) {
     dst.clear();
-    for row in src.chunks(stride).take(h) {
-        let row = &row[..w];
-        dst.extend((0..w).map(|x| {
-            let left = row[x.saturating_sub(1)];
-            let right = row[(x + 1).min(w - 1)];
-            // (left + 2·centro + right) / 4 = média de (média dos vizinhos) e centro.
-            lerp(row[x], lerp(left, right, 128), 128)
-        }));
+    dst.resize(w * h, 0);
+    let radius = radius.max(1);
+    for (row, out) in src.chunks(stride).take(h).zip(dst.chunks_exact_mut(w)) {
+        // Uma versão do laço para cada caso: sem desvio por pixel.
+        match gamma {
+            Some(table) => composite_row(&row[..w], radius, out, |px| gamma_px(px, table)),
+            None => composite_row(&row[..w], radius, out, |px| px),
+        }
+    }
+}
+
+/// Média de dois pixels, canal a canal; o mesmo que `lerp(a, b, 128)`.
+#[inline]
+fn average(a: u32, b: u32) -> u32 {
+    let rb = ((a & 0x00FF_00FF) + (b & 0x00FF_00FF)) >> 1;
+    let g = ((a & 0x0000_FF00) + (b & 0x0000_FF00)) >> 1;
+    (rb & 0x00FF_00FF) | (g & 0x0000_FF00)
+}
+
+/// Uma linha do sinal composto, com `finish` aplicado a cada pixel. O miolo
+/// lê os vizinhos direto; só as pontas repetem o pixel da borda.
+fn composite_row(row: &[u32], radius: usize, out: &mut [u32], finish: impl Fn(u32) -> u32) {
+    let w = row.len();
+    // (left + 2·centro + right) / 4 = média de (média dos vizinhos) e centro.
+    let mix = |left: u32, center: u32, right: u32| finish(average(center, average(left, right)));
+    let edge = |x: usize| {
+        mix(
+            row[x.saturating_sub(radius)],
+            row[x],
+            row[(x + radius).min(w - 1)],
+        )
+    };
+    if w <= 2 * radius {
+        for (x, px) in out.iter_mut().enumerate() {
+            *px = edge(x);
+        }
+        return;
+    }
+    for x in (0..radius).chain(w - radius..w) {
+        out[x] = edge(x);
+    }
+    let neighbors = row[..w - 2 * radius].iter().zip(&row[2 * radius..]);
+    for ((px, &center), (&left, &right)) in out[radius..w - radius]
+        .iter_mut()
+        .zip(&row[radius..w - radius])
+        .zip(neighbors)
+    {
+        *px = mix(left, center, right);
     }
 }
 
@@ -271,6 +356,25 @@ pub fn shade(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gamma_keeps_black_and_white_and_moves_mid_tones() {
+        for exponent in [2.5 / 2.2, 0.8] {
+            let table = gamma_table(exponent);
+            assert_eq!((table[0], table[255]), (0, 255));
+            assert!(table.windows(2).all(|w| w[0] <= w[1]), "monotônica");
+        }
+        assert!(gamma_table(2.5 / 2.2)[128] < 128, "TV de tubo escurece");
+        assert!(gamma_table(0.8)[128] > 128, "mais clara clareia");
+        assert_eq!(gamma_table(1.0), std::array::from_fn(|i| i as u8));
+        let mut pixels = [0x0080_4000, 0x00FF_FFFF];
+        let table = gamma_table(0.8);
+        apply_gamma(&mut pixels, &table);
+        let expected = |r: usize, g: usize, b: usize| {
+            (u32::from(table[r]) << 16) | (u32::from(table[g]) << 8) | u32::from(table[b])
+        };
+        assert_eq!(pixels, [expected(0x80, 0x40, 0), 0x00FF_FFFF]);
+    }
 
     const O: u32 = 0x000000;
     const X: u32 = 0xFFFFFF;
@@ -440,16 +544,45 @@ mod tests {
         // Pontilhado de colunas alternadas vira uma cor só no meio da linha.
         let src = [X, O, X, O, X, O];
         let mut dst = Vec::new();
-        composite(&src, 6, (6, 1), &mut dst);
+        composite(&src, 6, (6, 1), 1, None, &mut dst);
         assert_eq!(dst[1..5], [0x7F_7F7F; 4]);
         // Área lisa não muda; a folga do stride não é lida.
         composite(
             &[0x123456, 0x123456, 7, 0x123456, 0x123456, 7],
             3,
             (2, 2),
+            1,
+            None,
             &mut dst,
         );
         assert_eq!(dst, [0x123456; 4]);
+    }
+
+    #[test]
+    fn composite_reaches_one_console_pixel_in_an_upscaled_frame() {
+        // Pontilhado do console ampliado 2×: colunas em pares.
+        let src = [X, X, O, O, X, X, O, O];
+        let mut dst = Vec::new();
+        composite(&src, 8, (8, 1), 1, None, &mut dst);
+        assert_ne!(dst[2..6], [0x7F_7F7F; 4], "vizinho de 1 pixel não funde");
+        composite(&src, 8, (8, 1), 2, None, &mut dst);
+        assert_eq!(dst[2..6], [0x7F_7F7F; 4]);
+    }
+
+    #[test]
+    fn fused_gamma_matches_a_separate_pass() {
+        let table = gamma_table(0.8);
+        let src = [0x0010_2030, 0x00F0_E0D0, 0x0040_A040, 0x0080_8080, 0, 0];
+        let mut fused = Vec::new();
+        composite(&src, 3, (3, 2), 1, Some(&table), &mut fused);
+        let mut separate = Vec::new();
+        composite(&src, 3, (3, 2), 1, None, &mut separate);
+        apply_gamma(&mut separate, &table);
+        assert_eq!(fused, separate);
+        copy_with_gamma(&src, 3, (2, 2), &table, &mut fused);
+        let mut copied = vec![src[0], src[1], src[3], src[4]];
+        apply_gamma(&mut copied, &table);
+        assert_eq!(fused, copied);
     }
 
     #[test]

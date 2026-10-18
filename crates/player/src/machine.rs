@@ -14,7 +14,17 @@ pub const MAX_FRAME: (usize, usize) = (genesis::SCREEN_MAX_WIDTH, genesis::SCREE
 /// esticados para 4:3, como na TV.
 const PLAYSTATION_FRAME: (usize, usize) = (320, 240);
 
+/// Borda do quadro, em pixels de cada lado.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Margins {
+    pub left: usize,
+    pub top: usize,
+    pub right: usize,
+    pub bottom: usize,
+}
+
 /// Imagem de um quadro: `size.0` pixels válidos em cada linha de `stride`.
+#[derive(Clone, Copy)]
 pub struct Frame<'a> {
     pub pixels: &'a [u32],
     pub stride: usize,
@@ -22,7 +32,48 @@ pub struct Frame<'a> {
     /// Proporção da TV para a qual o console foi feito; `None` em telas
     /// próprias de pixels quadrados (Game Boy). O usuário escolhe se usa.
     pub tv_aspect: Option<(usize, usize)>,
+    /// Borda que a TV escondia (overscan), que o usuário pode cortar.
+    pub overscan: Margins,
+    /// Pixels da imagem por pixel do console (resolução interna; senão 1).
+    /// Efeitos que imitam o sinal da época agem nessa distância.
+    pub scale: usize,
 }
+
+impl<'a> Frame<'a> {
+    /// O mesmo quadro sem o overscan. A proporção da TV encolhe junto, para
+    /// o que sobra não esticar. Uma borda maior que o quadro é ignorada.
+    pub fn cropped(self) -> Self {
+        let m = self.overscan;
+        let (w, h) = self.size;
+        if m.left + m.right >= w || m.top + m.bottom >= h {
+            return self;
+        }
+        let size = (w - m.left - m.right, h - m.top - m.bottom);
+        let start = m.top * self.stride + m.left;
+        Self {
+            pixels: &self.pixels[start..],
+            stride: self.stride,
+            size,
+            tv_aspect: self.tv_aspect.map(|(aw, ah)| {
+                let (aw, ah) = (aw * size.0 * h, ah * size.1 * w);
+                let d = gcd(aw, ah);
+                (aw / d, ah / d)
+            }),
+            overscan: Margins::default(),
+            scale: self.scale,
+        }
+    }
+}
+
+fn gcd(a: usize, b: usize) -> usize {
+    if b == 0 { a.max(1) } else { gcd(b, a % b) }
+}
+
+/// Coluna da esquerda que o VDP do Master System apaga para esconder a
+/// rolagem horizontal (registrador 0, bit 5): muitos jogos a deixam ligada.
+const SMS_HIDDEN_COLUMN: usize = 8;
+/// Linhas do PlayStation que a TV escondia em cima e embaixo, em 240.
+const PLAYSTATION_OVERSCAN_LINES: usize = 8;
 
 pub enum Machine {
     MasterSystem {
@@ -177,18 +228,27 @@ impl Machine {
                 stride: sms::SCREEN_WIDTH,
                 size: (sms::SCREEN_WIDTH, sms::SCREEN_HEIGHT),
                 tv_aspect: Some((4, 3)),
+                overscan: Margins {
+                    left: SMS_HIDDEN_COLUMN,
+                    ..Margins::default()
+                },
+                scale: 1,
             },
             Self::Genesis { console, .. } => Frame {
                 pixels: console.framebuffer(),
                 stride: genesis::SCREEN_MAX_WIDTH,
                 size: console.frame_size(),
                 tv_aspect: Some((4, 3)),
+                overscan: Margins::default(),
+                scale: 1,
             },
             Self::GameBoy { console, .. } => Frame {
                 pixels: console.framebuffer(),
                 stride: gameboy::SCREEN_WIDTH,
                 size: (gameboy::SCREEN_WIDTH, gameboy::SCREEN_HEIGHT),
                 tv_aspect: None,
+                overscan: Margins::default(),
+                scale: 1,
             },
             Self::PlayStation { console, .. } => {
                 let (pixels, size) = console.framebuffer();
@@ -199,6 +259,14 @@ impl Machine {
                     // Os pixels do PS1 não são quadrados: 256 a 640 colunas
                     // e 240 ou 480 linhas ocupam a mesma tela 4:3.
                     tv_aspect: Some((4, 3)),
+                    // 240 ou 480 linhas (e a resolução interna): a mesma
+                    // fração da altura.
+                    overscan: Margins {
+                        top: PLAYSTATION_OVERSCAN_LINES * size.1 / 240,
+                        bottom: PLAYSTATION_OVERSCAN_LINES * size.1 / 240,
+                        ..Margins::default()
+                    },
+                    scale: console.framebuffer_scale(),
                 }
             }
         }
@@ -397,6 +465,62 @@ fn playstation_button(buttons: &mut psx::Buttons, action: Action) -> Option<&mut
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cropped_frame_skips_the_overscan_and_keeps_the_tv_shape() {
+        let pixels: Vec<u32> = (0..320 * 240).collect();
+        let frame = Frame {
+            pixels: &pixels,
+            stride: 320,
+            size: (320, 240),
+            tv_aspect: Some((4, 3)),
+            overscan: Margins {
+                top: 8,
+                bottom: 8,
+                ..Margins::default()
+            },
+            scale: 1,
+        };
+        let cropped = frame.cropped();
+        assert_eq!(cropped.size, (320, 224));
+        assert_eq!(cropped.pixels[0], 8 * 320, "começa na linha 8");
+        assert_eq!(cropped.stride, 320);
+        // 4:3 com 224 de 240 linhas: 4 × 240 : 3 × 224 = 10 : 7.
+        assert_eq!(cropped.tv_aspect, Some((10, 7)));
+        assert_eq!(cropped.overscan, Margins::default());
+        let sms = Frame {
+            overscan: Margins {
+                left: 8,
+                ..Margins::default()
+            },
+            size: (256, 192),
+            stride: 256,
+            tv_aspect: Some((4, 3)),
+            pixels: &pixels,
+            scale: 1,
+        }
+        .cropped();
+        assert_eq!((sms.size, sms.pixels[0]), ((248, 192), 8));
+        assert_eq!(sms.tv_aspect, Some((31, 24)), "4×248 : 3×256");
+        let square = Frame {
+            tv_aspect: None,
+            ..frame
+        };
+        assert_eq!(square.cropped().tv_aspect, None);
+        let too_big = Frame {
+            overscan: Margins {
+                top: 120,
+                bottom: 120,
+                ..Margins::default()
+            },
+            ..frame
+        };
+        assert_eq!(
+            too_big.cropped().size,
+            (320, 240),
+            "borda maior que o quadro"
+        );
+    }
 
     #[test]
     fn master_system_actions_map_to_joypad() {

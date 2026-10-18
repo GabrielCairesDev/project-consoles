@@ -320,7 +320,7 @@ impl App {
 
     fn run_frame(&mut self) {
         // O quadro que sai da tela vira o "anterior" do rastro do LCD.
-        let frame = self.machine.frame();
+        let frame = self.renderer.view(self.machine.frame());
         self.renderer
             .keep_previous(frame.pixels, frame.stride, frame.size);
         self.machine.run_frame();
@@ -349,12 +349,9 @@ impl App {
             .resize(width, height)
             .map_err(PlayerError::Surface)?;
         let mut buffer = game.surface.buffer_mut().map_err(PlayerError::Surface)?;
-        let frame = self.machine.frame();
-        self.renderer.draw(
-            frame.pixels,
-            frame.stride,
-            frame.size,
-            frame.tv_aspect,
+        let frame = self.renderer.view(self.machine.frame());
+        self.renderer.draw_frame(
+            &frame,
             &mut buffer,
             (width.get() as usize, height.get() as usize),
         );
@@ -852,6 +849,22 @@ mod tests {
             Machine::PlayStation { console, .. } => console.memory_card().to_vec(),
             _ => unreachable!("só PlayStation"),
         }
+    }
+
+    #[test]
+    fn frames_report_the_border_the_tv_hid_and_their_scale() {
+        let sms = sms_machine(vec![0x18, 0xFE]);
+        let frame = sms.frame();
+        assert_eq!(frame.overscan.left, 8, "coluna que o VDP apaga");
+        assert_eq!((frame.overscan.top, frame.overscan.bottom), (0, 0));
+        assert_eq!(frame.scale, 1);
+        let dir = tempfile::tempdir().expect("pasta temporária");
+        let ps1 = playstation_machine(dir.path());
+        let frame = ps1.frame();
+        let lines = 8 * frame.size.1 / 240;
+        assert_eq!((frame.overscan.top, frame.overscan.bottom), (lines, lines));
+        assert_eq!((frame.overscan.left, frame.overscan.right), (0, 0));
+        assert_eq!(frame.scale, 1, "sem quadro ampliado ainda");
     }
 
     #[test]

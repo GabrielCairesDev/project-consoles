@@ -7,13 +7,13 @@ use std::process::ExitCode;
 
 use player::controls::{Bindings, System};
 use player::image::{
-    AspectRatio, ColorDepth, Fit, FrameBlend, Geometry, ImageSettings, Palette, Resolution, Scaler,
-    ScreenEffect, Signal, TextureFilter,
+    AspectRatio, ColorDepth, Crop, Fit, FrameBlend, Gamma, Geometry, ImageSettings, Palette,
+    Resolution, Scaler, ScreenEffect, Signal, TextureFilter,
 };
 use project_consoles_lib::runtime::{
-    ASPECT_FLAG, BATTERY_FLAG, BIOS_FLAG, BLEND_FLAG, COLOR_FLAG, CONSOLE_FLAG, FIT_FLAG,
-    GEOMETRY_FLAG, KEYS_FLAG, PALETTE_FLAG, PLAY_FLAG, RESOLUTION_FLAG, SCALER_FLAG, SCREEN_FLAG,
-    SIGNAL_FLAG, STATE_FLAG, TEXTURE_FLAG,
+    ASPECT_FLAG, BATTERY_FLAG, BIOS_FLAG, BLEND_FLAG, COLOR_FLAG, CONSOLE_FLAG, CROP_FLAG,
+    FIT_FLAG, GAMMA_FLAG, GEOMETRY_FLAG, KEYS_FLAG, PALETTE_FLAG, PLAY_FLAG, RESOLUTION_FLAG,
+    SCALER_FLAG, SCREEN_FLAG, SIGNAL_FLAG, STATE_FLAG, TEXTURE_FLAG,
 };
 
 /// O mesmo binário é o launcher e, com
@@ -83,6 +83,8 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
     let mut color_depth = None;
     let mut geometry = None;
     let mut texture = None;
+    let mut gamma = None;
+    let mut crop = None;
     while let Some(flag) = args.next() {
         let value = args
             .next()
@@ -146,6 +148,14 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
             texture = Some(
                 TextureFilter::from_id(id).ok_or_else(|| format!("textura desconhecida: {id}"))?,
             );
+        } else if flag == GAMMA_FLAG {
+            let id = value.to_str().unwrap_or_default();
+            gamma = Some(Gamma::from_id(id).ok_or_else(|| format!("gama desconhecido: {id}"))?);
+        } else if flag == CROP_FLAG {
+            let id = value.to_str().unwrap_or_default();
+            crop = Some(
+                Crop::from_id(id).ok_or_else(|| format!("corte de bordas desconhecido: {id}"))?,
+            );
         } else {
             return Err(format!(
                 "argumento desconhecido: {}",
@@ -171,9 +181,11 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
                 geometry: geometry.unwrap_or(recommended.geometry),
                 texture: texture.unwrap_or(recommended.texture),
                 palette: palette.unwrap_or(recommended.palette),
+                gamma: gamma.unwrap_or(recommended.gamma),
                 scaler: scaler.unwrap_or(recommended.scaler),
                 aspect: aspect.unwrap_or(recommended.aspect),
                 fit: fit.unwrap_or(recommended.fit),
+                crop: crop.unwrap_or(recommended.crop),
                 screen: screen.unwrap_or(recommended.screen),
                 signal: signal.unwrap_or(recommended.signal),
                 blend: blend.unwrap_or(recommended.blend),
@@ -184,7 +196,7 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
 
 fn usage() -> ExitCode {
     eprintln!(
-        "uso: {PLAY_FLAG} <caminho da ROM> {CONSOLE_FLAG} <id> [{KEYS_FLAG} <ação=tecla,...>] [{STATE_FLAG} <arquivo>] [{BATTERY_FLAG} <arquivo>] [{BIOS_FLAG} <arquivo>] [{SCALER_FLAG} <id>] [{PALETTE_FLAG} <id>] [{ASPECT_FLAG} <id>] [{FIT_FLAG} <id>] [{SCREEN_FLAG} <id>] [{SIGNAL_FLAG} <id>] [{BLEND_FLAG} <id>] [{RESOLUTION_FLAG} <id>] [{COLOR_FLAG} <id>] [{GEOMETRY_FLAG} <id>] [{TEXTURE_FLAG} <id>]"
+        "uso: {PLAY_FLAG} <caminho da ROM> {CONSOLE_FLAG} <id> [{KEYS_FLAG} <ação=tecla,...>] [{STATE_FLAG} <arquivo>] [{BATTERY_FLAG} <arquivo>] [{BIOS_FLAG} <arquivo>] [{SCALER_FLAG} <id>] [{PALETTE_FLAG} <id>] [{ASPECT_FLAG} <id>] [{FIT_FLAG} <id>] [{SCREEN_FLAG} <id>] [{SIGNAL_FLAG} <id>] [{BLEND_FLAG} <id>] [{RESOLUTION_FLAG} <id>] [{COLOR_FLAG} <id>] [{GEOMETRY_FLAG} <id>] [{TEXTURE_FLAG} <id>] [{GAMMA_FLAG} <id>] [{CROP_FLAG} <id>]"
     );
     ExitCode::from(2)
 }
@@ -262,6 +274,18 @@ mod tests {
         );
         assert_eq!(image.texture, TextureFilter::Bilinear);
         assert!(parse(&[CONSOLE_FLAG, "playstation", TEXTURE_FLAG, "xbr"]).is_err());
+        let adjusted = [
+            CONSOLE_FLAG,
+            "playstation",
+            GAMMA_FLAG,
+            "crt",
+            CROP_FLAG,
+            "overscan",
+        ];
+        let image = parse(&adjusted).expect("válido").image;
+        assert_eq!((image.gamma, image.crop), (Gamma::Crt, Crop::Overscan));
+        assert!(parse(&[CONSOLE_FLAG, "playstation", GAMMA_FLAG, "2.2"]).is_err());
+        assert!(parse(&[CONSOLE_FLAG, "playstation", CROP_FLAG, "all"]).is_err());
         let default_ps1 = parse(&[CONSOLE_FLAG, "playstation"]).expect("válido").image;
         assert_eq!(default_ps1.resolution, Resolution::X2, "recomendada");
         assert!(parse(&[CONSOLE_FLAG, "playstation", RESOLUTION_FLAG, "8x"]).is_err());

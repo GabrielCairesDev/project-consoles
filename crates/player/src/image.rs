@@ -115,6 +115,81 @@ impl Palette {
     }
 }
 
+/// Gama da imagem (etapa de cor): a curva de brilho dos tons médios.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gamma {
+    /// As cores como o núcleo entrega.
+    Neutral,
+    /// Tons médios mais escuros, como numa TV de tubo (gama 2,5 em vez dos
+    /// 2,2 de um monitor), para a qual os jogos foram feitos.
+    Crt,
+    /// Tons médios mais claros: compensa scanlines e TV de tubo e ajuda em
+    /// jogos escuros.
+    Lighter,
+}
+
+impl Gamma {
+    pub const ALL: [Self; 3] = [Self::Neutral, Self::Crt, Self::Lighter];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Neutral => "neutral",
+            Self::Crt => "crt",
+            Self::Lighter => "lighter",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|gamma| gamma.id() == id)
+    }
+
+    pub fn available(_system: System) -> &'static [Self] {
+        &Self::ALL
+    }
+
+    /// Expoente aplicado a cada canal normalizado (`None` = identidade).
+    pub(crate) fn exponent(self) -> Option<f64> {
+        match self {
+            Self::Neutral => None,
+            Self::Crt => Some(2.5 / 2.2),
+            Self::Lighter => Some(0.8),
+        }
+    }
+}
+
+/// Bordas da imagem (etapa de ajuste).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Crop {
+    /// O quadro inteiro, como o núcleo desenha.
+    None,
+    /// Sem a borda que a TV escondia (overscan): a coluna de 8 pixels que o
+    /// Master System apaga, as linhas de cima e de baixo do PlayStation.
+    Overscan,
+}
+
+impl Crop {
+    pub const ALL: [Self; 2] = [Self::None, Self::Overscan];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Overscan => "overscan",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|crop| crop.id() == id)
+    }
+
+    /// Só onde o núcleo desenha borda escondida pela TV.
+    pub fn available(system: System) -> &'static [Self] {
+        match system {
+            System::MasterSystem | System::PlayStation => &Self::ALL,
+            System::Genesis | System::GameBoy => &[Self::None],
+        }
+    }
+}
+
 /// Proporção da imagem na tela (etapa de ajuste).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AspectRatio {
@@ -420,9 +495,11 @@ pub struct ImageSettings {
     pub geometry: Geometry,
     pub texture: TextureFilter,
     pub palette: Palette,
+    pub gamma: Gamma,
     pub scaler: Scaler,
     pub aspect: AspectRatio,
     pub fit: Fit,
+    pub crop: Crop,
     pub screen: ScreenEffect,
     pub signal: Signal,
     pub blend: FrameBlend,
@@ -445,9 +522,11 @@ impl ImageSettings {
             geometry: Geometry::Native,
             texture: TextureFilter::Nearest,
             palette: Palette::Core,
+            gamma: Gamma::Neutral,
             scaler: Scaler::Nearest,
             aspect,
             fit,
+            crop: Crop::None,
             screen: ScreenEffect::None,
             signal: Signal::Rgb,
             blend: FrameBlend::Off,
@@ -509,6 +588,12 @@ impl ImageSettings {
         }
         if !Palette::available(system).contains(&self.palette) {
             return Err(error("paleta", self.palette.id()));
+        }
+        if !Gamma::available(system).contains(&self.gamma) {
+            return Err(error("gama", self.gamma.id()));
+        }
+        if !Crop::available(system).contains(&self.crop) {
+            return Err(error("bordas", self.crop.id()));
         }
         if !Scaler::available(system).contains(&self.scaler) {
             return Err(error("ampliação", self.scaler.id()));
@@ -773,6 +858,39 @@ mod tests {
             ] {
                 assert_eq!(wrong.check(system).expect_err("só PS1").option, option);
             }
+        }
+    }
+
+    #[test]
+    fn gamma_everywhere_crop_only_where_the_tv_hid_a_border() {
+        for gamma in Gamma::ALL {
+            assert_eq!(Gamma::from_id(gamma.id()), Some(gamma));
+        }
+        for crop in Crop::ALL {
+            assert_eq!(Crop::from_id(crop.id()), Some(crop));
+        }
+        assert_eq!(Gamma::from_id("srgb"), None);
+        for system in System::ALL {
+            assert_eq!(Gamma::available(system), Gamma::ALL);
+            for preset in [
+                ImageSettings::original(system),
+                ImageSettings::recommended(system),
+            ] {
+                assert_eq!(preset.gamma, Gamma::Neutral, "{system:?}");
+                assert_eq!(preset.crop, Crop::None, "{system:?}");
+            }
+        }
+        assert_eq!(Crop::available(System::MasterSystem), Crop::ALL);
+        assert_eq!(Crop::available(System::PlayStation), Crop::ALL);
+        for system in [System::Genesis, System::GameBoy] {
+            let cropped = ImageSettings {
+                crop: Crop::Overscan,
+                ..ImageSettings::original(system)
+            };
+            assert_eq!(
+                cropped.check(system).expect_err("sem borda").option,
+                "bordas"
+            );
         }
     }
 

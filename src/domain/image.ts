@@ -18,6 +18,12 @@ export type Geometry = "native" | "precise";
 /** Filtragem das texturas 3D; espelha `player::image::TextureFilter::id`. */
 export type TextureFilter = "nearest" | "bilinear";
 
+/** Gama da imagem; espelha `player::image::Gamma::id`. */
+export type Gamma = "neutral" | "crt" | "lighter";
+
+/** Corte de bordas; espelha `player::image::Crop::id`. */
+export type Crop = "none" | "overscan";
+
 /** Cores da tela; espelha `player::image::Palette::id`. */
 export type Palette = "core" | "dmg" | "pocket";
 
@@ -43,9 +49,11 @@ export interface ImageChoices {
   geometry?: Geometry;
   texture?: TextureFilter;
   palette?: Palette;
+  gamma?: Gamma;
   scaler?: Scaler;
   aspect?: AspectRatio;
   fit?: Fit;
+  crop?: Crop;
   screen?: ScreenEffect;
   signal?: Signal;
   blend?: FrameBlend;
@@ -61,6 +69,10 @@ export interface ImageInfo {
   geometries: Geometry[];
   /** Filtragens de textura. */
   textures: TextureFilter[];
+  /** Gamas. */
+  gammas: Gamma[];
+  /** Cortes de borda (só onde a TV escondia borda). */
+  crops: Crop[];
   /** Paletas do console, na ordem de exibição. */
   palettes: Palette[];
   /** Ampliações do console, na ordem de exibição. */
@@ -90,12 +102,14 @@ const TECHNIQUES = [
   "geometry",
   "texture",
   "palette",
+  "gamma",
   "signal",
   "blend",
   "scaler",
   "screen",
   "aspect",
   "fit",
+  "crop",
 ] as const satisfies readonly (keyof ImageChoices)[];
 
 export function sameChoices(a: ImageChoices, b: ImageChoices): boolean {

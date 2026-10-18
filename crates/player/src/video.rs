@@ -8,7 +8,10 @@
 //! imagem original, pixel a pixel.
 
 use crate::enhance::{self, Tap};
-use crate::image::{AspectRatio, Fit, FrameBlend, ImageSettings, Scaler, ScreenEffect, Signal};
+use crate::image::{
+    AspectRatio, Crop, Fit, FrameBlend, ImageSettings, Scaler, ScreenEffect, Signal,
+};
+use crate::machine::Frame;
 use crate::mmpx;
 
 /// Tons que o núcleo do Game Boy desenha; a [`Palette`](crate::image::Palette) os substitui.
@@ -136,8 +139,11 @@ pub struct Renderer {
     screen: ScreenEffect,
     signal: Signal,
     blend: FrameBlend,
+    crop: Crop,
     /// Tons que substituem os do núcleo, se a paleta não for a dele.
     shades: Option<[u32; 4]>,
+    /// Tabela do gama, se ele não for o neutro.
+    gamma: Option<Box<[u8; 256]>>,
     colored: Vec<u32>,
     /// Quadro emulado anterior (sem cor aplicada), para o rastro do LCD.
     previous: Vec<u32>,
@@ -162,7 +168,12 @@ impl Renderer {
             screen: image.screen,
             signal: image.signal,
             blend: image.blend,
+            crop: image.crop,
             shades: image.palette.shades(),
+            gamma: image
+                .gamma
+                .exponent()
+                .map(|exponent| Box::new(enhance::gamma_table(exponent))),
             colored: Vec::new(),
             previous: Vec::new(),
             previous_size: (0, 0),
@@ -174,6 +185,15 @@ impl Renderer {
             pass: Vec::new(),
             columns: Vec::new(),
             rows: Vec::new(),
+        }
+    }
+
+    /// O quadro do núcleo como esta configuração o mostra: sem o overscan,
+    /// se o usuário cortou as bordas. Vale para desenhar e para o rastro.
+    pub fn view<'a>(&self, frame: Frame<'a>) -> Frame<'a> {
+        match self.crop {
+            Crop::None => frame,
+            Crop::Overscan => frame.cropped(),
         }
     }
 
@@ -197,7 +217,9 @@ impl Renderer {
     ///
     /// Copia `src` (`frame.0 × frame.1`, linhas de `stride` pixels)
     /// ampliado para `dst` (`window.0` de largura), com a ampliação
-    /// escolhida. O resto de `dst` fica preto.
+    /// escolhida. O resto de `dst` fica preto. Um pixel de `src` é um pixel
+    /// do console. Atalho dos testes para [`Self::draw_frame`].
+    #[cfg(test)]
     pub fn draw(
         &mut self,
         src: &[u32],
@@ -207,6 +229,23 @@ impl Renderer {
         dst: &mut [u32],
         window: (usize, usize),
     ) {
+        let frame = Frame {
+            pixels: src,
+            stride,
+            size: frame,
+            tv_aspect,
+            overscan: crate::machine::Margins::default(),
+            scale: 1,
+        };
+        self.draw_frame(&frame, dst, window);
+    }
+
+    /// Desenha o quadro do núcleo (já passado por [`Self::view`]). Efeitos
+    /// que imitam o sinal agem na distância de um pixel do console
+    /// ([`Frame::scale`]).
+    pub fn draw_frame(&mut self, image: &Frame<'_>, dst: &mut [u32], window: (usize, usize)) {
+        let (src, stride, frame, tv_aspect) =
+            (image.pixels, image.stride, image.size, image.tv_aspect);
         if frame.0 == 0 || frame.1 == 0 {
             dst.fill(0);
             return;
@@ -257,13 +296,25 @@ impl Renderer {
             };
             enhance::blend_frames(&mut colored, previous);
         }
+        // O gama (a tela) vem depois do rastro e do sinal, na mesma passada
+        // da última etapa que já reescreve o quadro.
+        let gamma = self.gamma.as_deref();
+        let composite = self.signal == Signal::Composite;
+        if let (Some(table), false) = (gamma, composite) {
+            if in_colored {
+                enhance::apply_gamma(&mut colored, table);
+            } else {
+                enhance::copy_with_gamma(src, stride, frame, table, &mut colored);
+                in_colored = true;
+            }
+        }
         let (mut src, mut stride) = if in_colored {
             (colored.as_slice(), frame.0)
         } else {
             (src, stride)
         };
-        if self.signal == Signal::Composite {
-            enhance::composite(src, stride, frame, &mut filtered);
+        if composite {
+            enhance::composite(src, stride, frame, image.scale, gamma, &mut filtered);
             (src, stride) = (filtered.as_slice(), frame.0);
         }
         match self.scaler {
@@ -464,6 +515,7 @@ impl Renderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::image::{Crop, Gamma};
 
     /// Configuração de teste: com `aspect`, preenche nessa proporção; sem,
     /// pixels quadrados em escala inteira (o comportamento de cada console
@@ -700,6 +752,96 @@ mod tests {
     }
 
     #[test]
+    fn gamma_changes_only_mid_tones_of_the_drawn_frame() {
+        let src = [0x0000_0000, 0x0080_8080, 0x00FF_FFFF, 0x0040_C010];
+        let draw = |gamma: Gamma| {
+            let mut dst = vec![0; 4];
+            with(|image| image.gamma = gamma).draw(&src, 4, (4, 1), None, &mut dst, (4, 1));
+            dst
+        };
+        assert_eq!(draw(Gamma::Neutral), src, "neutro é identidade");
+        let table = enhance::gamma_table(Gamma::Crt.exponent().expect("expoente"));
+        let mut expected = src;
+        enhance::apply_gamma(&mut expected, &table);
+        assert_eq!(draw(Gamma::Crt), expected);
+        let lighter = draw(Gamma::Lighter);
+        assert_eq!((lighter[0], lighter[2]), (0, 0x00FF_FFFF));
+        assert!(lighter[1] & 0xFF > 0x80);
+    }
+
+    #[test]
+    fn gamma_comes_after_the_lcd_trail() {
+        let (dark, light) = ([0x0000_0000u32], [0x00FF_FFFFu32]);
+        let mut renderer = Renderer::new(ImageSettings {
+            blend: FrameBlend::On,
+            gamma: Gamma::Lighter,
+            ..ImageSettings::original(crate::controls::System::GameBoy)
+        });
+        renderer.keep_previous(&light, 1, (1, 1));
+        let mut dst = [0];
+        renderer.draw(&dark, 1, (1, 1), None, &mut dst, (1, 1));
+        // Mistura primeiro (0x7F/0x80), depois o gama clareia a mistura.
+        let table = enhance::gamma_table(0.8);
+        let mixed = enhance::lerp(0, 0x00FF_FFFF, 128) & 0xFF;
+        assert_eq!(dst[0] & 0xFF, u32::from(table[mixed as usize]));
+    }
+
+    #[test]
+    fn crop_view_draws_the_frame_without_its_overscan() {
+        use crate::machine::Margins;
+        let src: Vec<u32> = (0..8 * 6).collect();
+        let frame = Frame {
+            pixels: &src,
+            stride: 8,
+            size: (8, 6),
+            tv_aspect: Some((4, 3)),
+            overscan: Margins {
+                left: 2,
+                top: 1,
+                right: 0,
+                bottom: 1,
+            },
+            scale: 1,
+        };
+        let plain = Renderer::new(ImageSettings::original(
+            crate::controls::System::PlayStation,
+        ));
+        assert_eq!(plain.view(frame).size, (8, 6), "sem corte: o quadro todo");
+        let cropping = Renderer::new(ImageSettings {
+            crop: Crop::Overscan,
+            ..ImageSettings::original(crate::controls::System::PlayStation)
+        });
+        let view = cropping.view(frame);
+        assert_eq!(view.size, (6, 4));
+        assert_eq!(view.pixels[0], 8 + 2, "começa em (2, 1)");
+        let window = (60, 40);
+        let mut from_view = vec![0; window.0 * window.1];
+        Renderer::new(ImageSettings::original(
+            crate::controls::System::PlayStation,
+        ))
+        .draw(
+            view.pixels,
+            view.stride,
+            view.size,
+            view.tv_aspect,
+            &mut from_view,
+            window,
+        );
+        let cut: Vec<u32> = src
+            .chunks(8)
+            .skip(1)
+            .take(4)
+            .flat_map(|row| row[2..].to_vec())
+            .collect();
+        let mut from_cut = vec![0; window.0 * window.1];
+        Renderer::new(ImageSettings::original(
+            crate::controls::System::PlayStation,
+        ))
+        .draw(&cut, 6, (6, 4), view.tv_aspect, &mut from_cut, window);
+        assert_eq!(from_view, from_cut);
+    }
+
+    #[test]
     fn every_pixel_is_written_whatever_was_in_the_window() {
         // Pintar só as barras exige que os filtros escrevam todo o retângulo:
         // o resultado sobre lixo tem que ser igual ao resultado sobre preto.
@@ -722,6 +864,11 @@ mod tests {
                                 Signal::Composite
                             } else {
                                 Signal::Rgb
+                            },
+                            gamma: if screen == ScreenEffect::Scanlines {
+                                Gamma::Lighter
+                            } else {
+                                Gamma::Neutral
                             },
                             ..ImageSettings::original(crate::controls::System::MasterSystem)
                         })
@@ -955,7 +1102,7 @@ mod tests {
     #[test]
     #[ignore = "benchmark: rodar em release, sob demanda"]
     fn bench_techniques_at_1440p() {
-        use crate::image::Palette;
+        use crate::image::{Gamma, Palette};
         use std::hint::black_box;
         use std::time::Instant;
 
@@ -1095,6 +1242,62 @@ mod tests {
                     ..ImageSettings::original(crate::controls::System::GameBoy)
                 },
                 None,
+            ),
+            (
+                "PS1 2× gama+bilinear",
+                (1024, 480),
+                frame(1024, 480, &rgb),
+                ImageSettings {
+                    scaler: Scaler::Bilinear,
+                    gamma: Gamma::Lighter,
+                    ..ImageSettings::original(crate::controls::System::PlayStation)
+                },
+                Some((4, 3)),
+            ),
+            (
+                "PS1 4× bilinear",
+                (2048, 960),
+                frame(2048, 960, &rgb),
+                ImageSettings {
+                    scaler: Scaler::Bilinear,
+                    ..ImageSettings::original(crate::controls::System::PlayStation)
+                },
+                Some((4, 3)),
+            ),
+            (
+                "PS1 4× gama+bilinear",
+                (2048, 960),
+                frame(2048, 960, &rgb),
+                ImageSettings {
+                    scaler: Scaler::Bilinear,
+                    gamma: Gamma::Lighter,
+                    ..ImageSettings::original(crate::controls::System::PlayStation)
+                },
+                Some((4, 3)),
+            ),
+            (
+                "PS1 4× composto+bilinear",
+                (2048, 960),
+                frame(2048, 960, &rgb),
+                ImageSettings {
+                    scaler: Scaler::Bilinear,
+                    signal: Signal::Composite,
+                    ..ImageSettings::original(crate::controls::System::PlayStation)
+                },
+                Some((4, 3)),
+            ),
+            (
+                "PS1 4× gama+composto+bil+CRT",
+                (2048, 960),
+                frame(2048, 960, &rgb),
+                ImageSettings {
+                    scaler: Scaler::Bilinear,
+                    gamma: Gamma::Lighter,
+                    screen: ScreenEffect::Crt,
+                    signal: Signal::Composite,
+                    ..ImageSettings::original(crate::controls::System::PlayStation)
+                },
+                Some((4, 3)),
             ),
             (
                 "PS1 composto+bilinear+CRT",

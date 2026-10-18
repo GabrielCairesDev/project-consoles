@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use player::controls::{Bindings, SUPPORTED_KEYS, System};
 use player::image::{
-    AspectRatio, ColorDepth, Fit, FrameBlend, Geometry, ImageSettings, Palette, Resolution, Scaler,
-    ScreenEffect, Signal, TextureFilter,
+    AspectRatio, ColorDepth, Crop, Fit, FrameBlend, Gamma, Geometry, ImageSettings, Palette,
+    Resolution, Scaler, ScreenEffect, Signal, TextureFilter,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
@@ -107,6 +107,10 @@ pub struct ImageInfo {
     geometries: Vec<&'static str>,
     /// Filtragens de textura ([`TextureFilter::id`]).
     textures: Vec<&'static str>,
+    /// Gamas ([`Gamma::id`]).
+    gammas: Vec<&'static str>,
+    /// Cortes de borda ([`Crop::id`]).
+    crops: Vec<&'static str>,
     /// Ampliações do console ([`Scaler::id`]), na ordem de exibição.
     scalers: Vec<&'static str>,
     /// Proporções do console ([`AspectRatio::id`]).
@@ -141,6 +145,8 @@ impl ImageInfo {
                 .iter()
                 .map(|t| t.id())
                 .collect(),
+            gammas: Gamma::available(system).iter().map(|g| g.id()).collect(),
+            crops: Crop::available(system).iter().map(|c| c.id()).collect(),
             scalers: Scaler::available(system).iter().map(|s| s.id()).collect(),
             aspects: AspectRatio::available(system)
                 .iter()
@@ -929,6 +935,12 @@ mod tests {
         assert_eq!(ps1_image.textures, ["nearest", "bilinear"]);
         assert_eq!(ps1_image.recommended.texture.as_deref(), Some("nearest"));
         assert_eq!(gb_image.textures, ["nearest"]);
+        assert_eq!(gb_image.gammas, ["neutral", "crt", "lighter"]);
+        assert_eq!(gb_image.crops, ["none"]);
+        assert_eq!(ps1_image.crops, ["none", "overscan"]);
+        assert_eq!(sms_image.crops, ["none", "overscan"]);
+        assert_eq!(ps1_image.recommended.crop.as_deref(), Some("none"));
+        assert_eq!(sms_image.recommended.gamma.as_deref(), Some("neutral"));
         assert_eq!(ps1_image.recommended.resolution.as_deref(), Some("2x"));
         assert_eq!(ps1_image.recommended.color_depth.as_deref(), Some("24-bit"));
         assert_eq!(ps1_image.original.resolution.as_deref(), Some("1x"));

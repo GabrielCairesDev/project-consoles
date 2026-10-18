@@ -309,6 +309,15 @@ impl Gpu {
         }
     }
 
+    /// Pixels da imagem de [`Self::frame`] por pixel do console, na
+    /// horizontal e na vertical (a escala da resolução interna, ou 1).
+    pub(crate) fn frame_scale(&self) -> usize {
+        match (self.enhanced_size, self.renderer.enhanced()) {
+            (Some(_), Some(enhanced)) => enhanced.scale(),
+            _ => 1,
+        }
+    }
+
     /// Troca as melhorias do desenho. A imagem melhorada aparece a partir
     /// do próximo quadro.
     pub(crate) fn set_enhancements(&mut self, enhancements: Enhancements) {
@@ -552,6 +561,16 @@ mod tests {
         gpu.gp1(0x0300_0001);
         gpu.capture_frame();
         assert_eq!(gpu.frame().1, (320, 240));
+    }
+
+    #[test]
+    fn frame_scale_follows_the_picture_actually_shown() {
+        let mut gpu = gpu_with_picture(3);
+        assert_eq!(gpu.frame_scale(), 3);
+        gpu.gp1(0x0800_0011); // 24 bits: a imagem fica em 1×
+        gpu.capture_frame();
+        assert_eq!(gpu.frame_scale(), 1);
+        assert_eq!(gpu_with_picture(1).frame_scale(), 1);
     }
 
     #[test]

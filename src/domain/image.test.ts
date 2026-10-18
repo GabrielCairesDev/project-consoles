@@ -11,6 +11,8 @@ const SMS: ImageInfo = {
   colorDepths: ["15-bit"],
   geometries: ["native"],
   textures: ["nearest"],
+  gammas: ["neutral", "crt", "lighter"],
+  crops: ["none"],
   palettes: ["core"],
   scalers: ["nearest", "epx"],
   original: { scaler: "nearest" },

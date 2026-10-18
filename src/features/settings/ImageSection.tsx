@@ -5,6 +5,8 @@ import { type Choice, ChoiceGroup } from "../../components/ChoiceGroup";
 import {
   type AspectRatio,
   type ColorDepth,
+  type Crop,
+  type Gamma,
   type Fit,
   type Geometry,
   type Resolution,
@@ -76,6 +78,29 @@ const TEXTURE_CHOICE: Record<TextureFilter, Omit<Choice<TextureFilter>, "value">
   bilinear: {
     label: "Suavizada",
     description: "Mistura os pontos vizinhos da textura, sem serrilhado de perto. Sprites e textos continuam nítidos.",
+  },
+};
+
+/** Curva de brilho dos tons médios. */
+const GAMMA_CHOICE: Record<Gamma, Omit<Choice<Gamma>, "value">> = {
+  neutral: { label: "Original", description: "As cores como o console gera." },
+  crt: {
+    label: "TV de tubo",
+    description: "Tons médios mais escuros, como na TV para a qual os jogos foram feitos.",
+  },
+  lighter: {
+    label: "Mais clara",
+    description: "Tons médios mais claros: compensa scanlines e TV de tubo e ajuda em jogos escuros.",
+  },
+};
+
+/** Bordas que a TV escondia. */
+const CROP_CHOICE: Record<Crop, Omit<Choice<Crop>, "value">> = {
+  none: { label: "Quadro inteiro", description: "Tudo o que o console desenha, inclusive as bordas." },
+  overscan: {
+    label: "Cortar overscan",
+    description:
+      "Tira a borda que a TV escondia: a coluna vazia à esquerda no Master System, as linhas de cima e de baixo no PlayStation.",
   },
 };
 
@@ -265,6 +290,15 @@ export function ImageSection({ image, choices, disabled, onChange }: ImageSectio
           onChange={(palette) => onChange({ ...choices, palette })}
         />
       )}
+      {image.gammas.length > 1 && (
+        <ChoiceGroup
+          label="Brilho"
+          choices={image.gammas.map((value) => ({ value, ...GAMMA_CHOICE[value] }))}
+          value={choices.gamma ?? null}
+          disabled={disabled}
+          onChange={(gamma) => onChange({ ...choices, gamma })}
+        />
+      )}
       {image.scalers.length > 1 && (
         <ChoiceGroup
           label="Ampliação"
@@ -317,6 +351,15 @@ export function ImageSection({ image, choices, disabled, onChange }: ImageSectio
           value={choices.fit ?? null}
           disabled={disabled}
           onChange={(fit) => onChange({ ...choices, fit })}
+        />
+      )}
+      {image.crops.length > 1 && (
+        <ChoiceGroup
+          label="Bordas"
+          choices={image.crops.map((value) => ({ value, ...CROP_CHOICE[value] }))}
+          value={choices.crop ?? null}
+          disabled={disabled}
+          onChange={(crop) => onChange({ ...choices, crop })}
         />
       )}
       <div className={styles.actions}>

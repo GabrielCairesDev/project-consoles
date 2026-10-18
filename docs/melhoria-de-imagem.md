@@ -40,7 +40,7 @@ Referência obrigatória para a regra §13 do `CLAUDE.md`. Vale para os consoles
 |---------|----------------|
 | Paleta (portáteis monocromáticos) | verde original, cinza ou personalizada |
 | Correção de cor de LCD | reproduz a tela real (mais escura e dessaturada) |
-| Gama / brilho | ajuste fino |
+| Gama / brilho | ajuste fino | no app: Original, TV de tubo (gama 2,5 sobre os 2,2 do monitor, tons médios mais escuros) e Mais clara (compensa scanlines e jogos escuros); aplicado depois do rastro e do sinal |
 
 ### Etapa 3 — Escala
 | Técnica | Para que serve | Tipo |
@@ -58,12 +58,12 @@ Referência obrigatória para a regra §13 do `CLAUDE.md`. Vale para os consoles
 |---------|----------------|
 | Scanlines | linhas do CRT (a partir de 2× na vertical) |
 | Máscara CRT (abertura) | aparência de tubo; no app, junto com as scanlines ("TV de tubo") |
-| Sinal composto (simplificado) | recria a transparência por dithering: mistura 1-2-1 na linha. Não é a simulação NTSC completa (a do Blargg é LGPL) |
+| Sinal composto (simplificado) | recria a transparência por dithering: mistura 1-2-1 na linha, com os vizinhos a um pixel do console (também na resolução interna ampliada). Não é a simulação NTSC completa (a do Blargg é LGPL) |
 | Grade de LCD | aparência de tela de portátil (a partir de 3×) |
 | Frame blending | recria o rastro do LCD; sem ele, efeitos de piscar viram flicker |
 
 ### Etapa 5 — Ajuste
-Proporção (original, 4:3, pixels quadrados), escala inteira ou preencher, e corte de borda/overscan.
+Proporção (original, 4:3, pixels quadrados), escala inteira ou preencher, e corte de borda/overscan. O corte tira só a borda que a TV escondia, definida pelo núcleo (`Frame::overscan`): a coluna de 8 pixels que o VDP do Master System apaga e 8 de cada 240 linhas em cima e embaixo no PlayStation. A proporção da TV encolhe junto, para o resto não esticar.
 
 ## 4. Orçamento de desempenho
 - Cada técnica é medida em release, num quadro de 2560×1440, e o custo fica registrado na matriz.
@@ -81,9 +81,10 @@ Proporção (original, 4:3, pixels quadrados), escala inteira ou preencher, e co
 | PGXP | — | — | — | o |
 | 24 bits / sem dithering | — | — | — | R |
 | Filtragem de textura | — | — | — | o |
-| Downsampling adaptativo | — | — | — | o |
+| Downsampling adaptativo | — | — | — | — (sprites, textos e telas só 2D já saem da grade 1×) |
 | Paleta | — | — | R (verde original) | — |
 | Correção de cor de LCD | — | — | — (tela monocromática; as paletas cobrem) | — |
+| Gama / brilho | o | o | o | o |
 | Scale2x/3x | R | R | R | — |
 | MMPX | o | o | o | — |
 | xBRZ / ScaleFX | — (licença) | — (licença) | — (licença) | — |
@@ -97,6 +98,7 @@ Proporção (original, 4:3, pixels quadrados), escala inteira ou preencher, e co
 | Proporção: TV 4:3 | o | o | — | R |
 | Encaixe: escala inteira | R | R | R | o |
 | Encaixe: preencher | o | o | o | R |
+| Corte de overscan | o | — (sem borda escondida) | — (tela própria) | o |
 
 Ao implementar ou medir uma técnica, atualize esta matriz (custo e estado).
 
@@ -118,7 +120,13 @@ Benchmark: `cargo test --release -p player bench_ -- --ignored --nocapture` (`vi
 | Composto + EPX + TV de tubo | implementada | SMS 256×192 | 2,14–2,17 |
 | Composto + MMPX + TV de tubo (pior caso) | implementada | SMS 256×192 | 3,43–3,47 |
 | Paleta + rastro + EPX + grade do LCD | implementada | GB 160×144 | 1,68–2,01 |
-| Composto + bilinear + TV de tubo | implementada | PS1 640×480, 4:3 | 2,61–2,83 |
+| Composto + bilinear + TV de tubo | implementada | PS1 640×480, 4:3 | 2,41–2,83 |
+| Gama + bilinear | implementada | PS1 2× (1024×480), 4:3 | 1,52–1,60 |
+| Bilinear | implementada | PS1 4× (2048×960), 4:3 | 2,28–2,33 |
+| Gama + bilinear | implementada | PS1 4×, 4:3 | 3,28–3,56 |
+| Composto + bilinear | implementada | PS1 4×, 4:3 | 3,02 (4,08 antes de otimizar o composto) |
+| Gama + composto + bilinear + TV de tubo (pior caso do PS1) | implementada | PS1 4×, 4:3 | 4,35 (acima do orçamento) |
+| Corte de overscan | implementada (só muda a origem do quadro, custo desprezível) | — | — |
 | Demais | não implementadas | — | — |
 
 **Etapa 1 (núcleo, PlayStation).** Medida pelo núcleo, não pelo player: `enhancements_speed` em `crates/psx/tests/test_programs.rs` (release, Crash Bandicoot, 1200 quadros depois de 1500 de abertura, um Mac com Apple Silicon). O console precisa de 60 quadros/s (16,7 ms por quadro). O teste também confere que a VRAM 1× e os ciclos são idênticos em todos os casos.
@@ -141,7 +149,8 @@ Benchmark: `cargo test --release -p player bench_ -- --ignored --nocapture` (`vi
 - 2× fica com folga e é o Recomendado. 3× e 4× têm média bem acima de 60 quadros/s, mas piores quadros acima de 16,7 ms; por isso a tela mostra o aviso de pesada nelas.
 - 24 bits e PGXP não pesam: a variação entre execuções é maior que a diferença. O PGXP achou a fração de 95% dos vértices desenhados no Crash Bandicoot.
 - A filtragem de textura custa 1–2% dos quadros/s. Fica fora do Recomendado por mudar o visual pensado para texturas pixeladas (gosto, não correção).
-- Downsampling adaptativo: não implementado. Retângulos e linhas (sprites, textos e boa parte das telas 2D) já ficam na grade 1× na imagem ampliada, o que cobre a maior parte do motivo dele.
+- Downsampling adaptativo: não se aplica (decisão). Ele existe para telas 2D desenhadas na resolução interna ficarem nítidas; aqui retângulos e linhas (sprites, textos e boa parte das telas 2D) já ficam na grade 1× na imagem ampliada, e quadros sem polígonos são idênticos ao 1×.
+- No player, o PS1 em 4× entrega 2 milhões de pixels por quadro às etapas de cor e sinal. Com tudo ligado (gama, composto, bilinear e TV de tubo) passa 0,35 ms do orçamento; a opção 4× já mostra o aviso de pesada. Migrar a apresentação para GPU é decisão do usuário.
 
 Histórico: antes de pintar só as barras, a janela inteira era limpa e reescrita, e a bilinear do PS1 em 640×480 custava 5,1–5,4 ms (acima do orçamento).
 

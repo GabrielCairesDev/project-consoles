@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 
 use player::controls::{BindingError, Bindings, System};
 use player::image::{
-    AspectRatio, ColorDepth, Fit, FrameBlend, Geometry, ImageSettings, Palette, Resolution, Scaler,
-    ScreenEffect, Signal, TextureFilter,
+    AspectRatio, ColorDepth, Crop, Fit, FrameBlend, Gamma, Geometry, ImageSettings, Palette,
+    Resolution, Scaler, ScreenEffect, Signal, TextureFilter,
 };
 use serde::{Deserialize, Serialize};
 
@@ -94,11 +94,15 @@ pub struct ImageChoices {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub palette: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub gamma: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub scaler: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aspect: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crop: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub screen: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -115,9 +119,11 @@ impl From<ImageSettings> for ImageChoices {
             geometry: Some(image.geometry.id().to_owned()),
             texture: Some(image.texture.id().to_owned()),
             palette: Some(image.palette.id().to_owned()),
+            gamma: Some(image.gamma.id().to_owned()),
             scaler: Some(image.scaler.id().to_owned()),
             aspect: Some(image.aspect.id().to_owned()),
             fit: Some(image.fit.id().to_owned()),
+            crop: Some(image.crop.id().to_owned()),
             screen: Some(image.screen.id().to_owned()),
             signal: Some(image.signal.id().to_owned()),
             blend: Some(image.blend.id().to_owned()),
@@ -161,6 +167,18 @@ const PALETTE: Technique<Palette> = Technique {
     name: "a paleta",
     from_id: Palette::from_id,
     available: Palette::available,
+};
+
+const GAMMA: Technique<Gamma> = Technique {
+    name: "o gama",
+    from_id: Gamma::from_id,
+    available: Gamma::available,
+};
+
+const CROP: Technique<Crop> = Technique {
+    name: "o corte de bordas",
+    from_id: Crop::from_id,
+    available: Crop::available,
 };
 
 const SCALER: Technique<Scaler> = Technique {
@@ -267,9 +285,11 @@ impl ImageChoices {
             geometry: GEOMETRY.resolve(system, self.geometry.as_deref(), recommended.geometry),
             texture: TEXTURE.resolve(system, self.texture.as_deref(), recommended.texture),
             palette: PALETTE.resolve(system, self.palette.as_deref(), recommended.palette),
+            gamma: GAMMA.resolve(system, self.gamma.as_deref(), recommended.gamma),
             scaler: SCALER.resolve(system, self.scaler.as_deref(), recommended.scaler),
             aspect: ASPECT.resolve(system, self.aspect.as_deref(), recommended.aspect),
             fit: FIT.resolve(system, self.fit.as_deref(), recommended.fit),
+            crop: CROP.resolve(system, self.crop.as_deref(), recommended.crop),
             screen: SCREEN.resolve(system, self.screen.as_deref(), recommended.screen),
             signal: SIGNAL.resolve(system, self.signal.as_deref(), recommended.signal),
             blend: BLEND.resolve(system, self.blend.as_deref(), recommended.blend),
@@ -284,6 +304,8 @@ impl ImageChoices {
         GEOMETRY.check(system, self.geometry.as_deref())?;
         TEXTURE.check(system, self.texture.as_deref())?;
         PALETTE.check(system, self.palette.as_deref())?;
+        GAMMA.check(system, self.gamma.as_deref())?;
+        CROP.check(system, self.crop.as_deref())?;
         SCALER.check(system, self.scaler.as_deref())?;
         ASPECT.check(system, self.aspect.as_deref())?;
         FIT.check(system, self.fit.as_deref())?;
@@ -565,6 +587,17 @@ mod tests {
         assert_eq!(
             sharp_3d.check(System::Genesis),
             Err("A resolução interna \"4x\" não existe para este console.".to_owned())
+        );
+        let cropped = ImageChoices {
+            crop: Some("overscan".to_owned()),
+            gamma: Some("lighter".to_owned()),
+            ..ImageChoices::default()
+        };
+        assert_eq!(cropped.check(System::PlayStation), Ok(()));
+        assert_eq!(cropped.check(System::MasterSystem), Ok(()));
+        assert_eq!(
+            cropped.check(System::GameBoy),
+            Err("O corte de bordas \"overscan\" não existe para este console.".to_owned())
         );
         let eight_x = ImageChoices {
             resolution: Some("8x".to_owned()),

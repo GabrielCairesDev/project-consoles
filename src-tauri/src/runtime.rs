@@ -53,6 +53,10 @@ pub const COLOR_FLAG: &str = "--color";
 pub const GEOMETRY_FLAG: &str = "--geometry";
 /// Argumento com a filtragem de textura ([`player::image::TextureFilter::id`]).
 pub const TEXTURE_FLAG: &str = "--texture";
+/// Argumento com o gama ([`player::image::Gamma::id`]).
+pub const GAMMA_FLAG: &str = "--gamma";
+/// Argumento com o corte de bordas ([`player::image::Crop::id`]).
+pub const CROP_FLAG: &str = "--crop";
 
 /// Núcleo que roda jogos deste console, se houver.
 pub fn system_for(console_id: &str) -> Option<System> {
@@ -164,7 +168,11 @@ fn play_command(exe: &Path, rom: &Path, options: &LaunchOptions) -> Command {
         .arg(GEOMETRY_FLAG)
         .arg(options.image.geometry.id())
         .arg(TEXTURE_FLAG)
-        .arg(options.image.texture.id());
+        .arg(options.image.texture.id())
+        .arg(GAMMA_FLAG)
+        .arg(options.image.gamma.id())
+        .arg(CROP_FLAG)
+        .arg(options.image.crop.id());
     if let Some(state) = &options.state_path {
         command.arg(STATE_FLAG).arg(state);
     }
@@ -366,7 +374,11 @@ pub(crate) mod tests {
                 GEOMETRY_FLAG,
                 "native",
                 TEXTURE_FLAG,
-                "nearest"
+                "nearest",
+                GAMMA_FLAG,
+                "neutral",
+                CROP_FLAG,
+                "none"
             ]
         );
         let with_state = LaunchOptions {
@@ -405,6 +417,10 @@ pub(crate) mod tests {
                 "native",
                 TEXTURE_FLAG,
                 "nearest",
+                GAMMA_FLAG,
+                "neutral",
+                CROP_FLAG,
+                "none",
                 STATE_FLAG,
                 "/dados/sonic.state",
                 BATTERY_FLAG,
@@ -428,7 +444,7 @@ pub(crate) mod tests {
             ..options()
         };
         assert_eq!(
-            args(&plain)[6..28],
+            args(&plain)[6..32],
             [
                 SCALER_FLAG,
                 "nearest",
@@ -451,7 +467,11 @@ pub(crate) mod tests {
                 GEOMETRY_FLAG,
                 "native",
                 TEXTURE_FLAG,
-                "nearest"
+                "nearest",
+                GAMMA_FLAG,
+                "neutral",
+                CROP_FLAG,
+                "none"
             ]
         );
     }
