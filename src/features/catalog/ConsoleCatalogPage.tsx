@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { RotateCw, TriangleAlert } from "lucide-react";
 import { Button } from "../../components/Button";
-import { type Console, decadeLabel, groupByDecade } from "../../domain/console";
+import { type Console, sortByRelease } from "../../domain/console";
 import { ConsoleCollection } from "./ConsoleCollection";
 import { useConsoles } from "./useConsoles";
 import styles from "./ConsoleCatalogPage.module.css";
@@ -34,25 +34,11 @@ interface CatalogProps {
   onSelect: (console: Console) => void;
 }
 
-/** Consoles sempre em ordem de lançamento, agrupados por década. */
+/** Todos os consoles numa grade só, em ordem de lançamento. */
 function Catalog({ consoles, onSelect }: CatalogProps) {
-  const decades = useMemo(() => groupByDecade(consoles), [consoles]);
+  const sorted = useMemo(() => sortByRelease(consoles), [consoles]);
 
-  return (
-    <div className={styles.decades}>
-      {decades.map(({ decade, consoles: items }) => {
-        const headingId = `decada-${decade}`;
-        return (
-          <section key={decade} aria-labelledby={headingId}>
-            <h2 id={headingId} className={styles.decadeTitle}>
-              {decadeLabel(decade)}
-            </h2>
-            <ConsoleCollection consoles={items} onSelect={onSelect} />
-          </section>
-        );
-      })}
-    </div>
-  );
+  return <ConsoleCollection consoles={sorted} onSelect={onSelect} />;
 }
 
 function LoadingState() {

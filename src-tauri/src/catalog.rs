@@ -196,30 +196,6 @@ const CONSOLES: &[Console] = &[
         Hybrid,
         156_590_000,
     ),
-    console(
-        "playstation-5",
-        "PlayStation 5",
-        "Sony",
-        2020,
-        Home,
-        95_300_000,
-    ),
-    console(
-        "xbox-series",
-        "Xbox Series X|S",
-        "Microsoft",
-        2020,
-        Home,
-        35_000_000,
-    ),
-    console(
-        "switch-2",
-        "Nintendo Switch 2",
-        "Nintendo",
-        2025,
-        Hybrid,
-        23_680_000,
-    ),
 ];
 
 /// Retorna todos os consoles, ordenados por ano de lançamento e nome.
@@ -274,6 +250,17 @@ mod tests {
             assert!(
                 !console.manufacturer.trim().is_empty(),
                 "{}: fabricante vazio",
+                console.id
+            );
+        }
+    }
+
+    #[test]
+    fn catalog_stops_before_the_2020s() {
+        for console in consoles() {
+            assert!(
+                console.release_year < 2020,
+                "{}: consoles a partir de 2020 ficam fora do catálogo",
                 console.id
             );
         }

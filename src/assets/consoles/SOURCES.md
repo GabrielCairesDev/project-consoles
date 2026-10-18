@@ -23,16 +23,13 @@ Fontes: Wikimedia Commons (apenas arquivos de licença livre) e Simple Icons (CC
 | `playstation-2` | Simple Icons 16.35.0 — `playstation2.svg` | CC0 1.0 |
 | `playstation-3` | Simple Icons 16.35.0 — `playstation3.svg` | CC0 1.0 |
 | `playstation-4` | Simple Icons 16.35.0 — `playstation4.svg` | CC0 1.0 |
-| `playstation-5` | Simple Icons 16.35.0 — `playstation5.svg` | CC0 1.0 |
 | `ps-vita` | Simple Icons 16.35.0 — `playstationvita.svg` | CC0 1.0 |
 | `psp` | Simple Icons 16.35.0 — `playstationportable.svg` | CC0 1.0 |
 | `sega-saturn` | [Sega Saturn Black Logo.svg](https://commons.wikimedia.org/wiki/File:Sega_Saturn_Black_Logo.svg) | Public domain (marca registrada) |
 | `snes` | [Super Nintendo Entertainment System logo.svg](https://commons.wikimedia.org/wiki/File:Super_Nintendo_Entertainment_System_logo.svg) | Public domain (marca registrada) |
 | `switch` | [Nintendo Switch Logo.svg](https://commons.wikimedia.org/wiki/File:Nintendo_Switch_Logo.svg) | Public domain (marca registrada) |
-| `switch-2` | [Nintendo Switch 2 logo transparent.svg](https://commons.wikimedia.org/wiki/File:Nintendo_Switch_2_logo_transparent.svg) | Public domain (marca registrada) |
 | `wii` | [Wii.svg](https://commons.wikimedia.org/wiki/File:Wii.svg) | Public domain (marca registrada) |
 | `wii-u` | [WiiU.svg](https://commons.wikimedia.org/wiki/File:WiiU.svg) | Public domain (marca registrada) |
 | `xbox` | [Xbox Logo 2001.svg](https://commons.wikimedia.org/wiki/File:Xbox_Logo_2001.svg) | Public domain (marca registrada) |
 | `xbox-360` | [Xbox 360 wordmark.svg](https://commons.wikimedia.org/wiki/File:Xbox_360_wordmark.svg) | Public domain (marca registrada) |
 | `xbox-one` | [Xbox One logo wordmark.svg](https://commons.wikimedia.org/wiki/File:Xbox_One_logo_wordmark.svg) | Public domain (marca registrada) |
-| `xbox-series` | [Xbox Series X S black.svg](https://commons.wikimedia.org/wiki/File:Xbox_Series_X_S_black.svg) | Public domain |

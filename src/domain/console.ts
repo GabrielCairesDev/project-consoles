@@ -23,36 +23,11 @@ export interface Console {
   image: ImageInfo | null;
 }
 
-export interface DecadeGroup {
-  /** Primeiro ano da década (ex.: 1980). */
-  decade: number;
-  consoles: Console[];
-}
-
 /**
- * Agrupa consoles por década de lançamento, em ordem crescente.
- * Dentro de cada década, ordena por ano, preservando a ordem recebida do
- * núcleo entre consoles do mesmo ano.
+ * Consoles em ordem de lançamento, do mais antigo ao mais novo. Entre
+ * consoles do mesmo ano, preserva a ordem recebida do núcleo (por nome).
+ * Não altera o array recebido.
  */
-export function groupByDecade(consoles: readonly Console[]): DecadeGroup[] {
-  const byDecade = new Map<number, Console[]>();
-  for (const item of consoles) {
-    const decade = Math.floor(item.releaseYear / 10) * 10;
-    const group = byDecade.get(decade);
-    if (group) {
-      group.push(item);
-    } else {
-      byDecade.set(decade, [item]);
-    }
-  }
-  return [...byDecade.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([decade, items]) => ({
-      decade,
-      consoles: items.sort((a, b) => a.releaseYear - b.releaseYear),
-    }));
-}
-
-export function decadeLabel(decade: number): string {
-  return `Anos ${decade}`;
+export function sortByRelease(consoles: readonly Console[]): Console[] {
+  return [...consoles].sort((a, b) => a.releaseYear - b.releaseYear);
 }

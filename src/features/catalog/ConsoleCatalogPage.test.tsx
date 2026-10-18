@@ -74,7 +74,7 @@ describe("ConsoleCatalogPage", () => {
   it("não exibe cabeçalho visível, só um título para leitores de tela", async () => {
     fetchMock.mockResolvedValue(CONSOLES);
     render(<ConsoleCatalogPage onSelect={noop} />);
-    await screen.findByRole("region", { name: "Anos 1980" });
+    await screen.findByRole("list");
 
     expect(screen.queryByRole("banner")).toBeNull();
     expect(screen.queryByText(/bem-vindo/i)).toBeNull();
@@ -94,47 +94,44 @@ describe("ConsoleCatalogPage", () => {
     fetchMock.mockResolvedValue(CONSOLES);
     render(<ConsoleCatalogPage onSelect={noop} />);
 
-    const eighties = await screen.findByRole("region", { name: "Anos 1980" });
-    const tiles = within(eighties).getAllByRole("listitem");
-    expect(tiles).toHaveLength(2);
+    const grid = await screen.findByRole("list");
+    const tiles = within(grid).getAllByRole("listitem");
+    expect(tiles).toHaveLength(3);
     for (const tile of tiles) {
       expect(tile.textContent).toBe("");
       const logo = within(tile).getByRole("img");
       // Todo logo é embutido como data URI, sem requisição de arquivo à parte.
       expect(logo.getAttribute("src")).toMatch(/^data:image\/svg\+xml/);
     }
-    expect(within(eighties).getByRole("img", { name: "Game Boy" })).toBeInTheDocument();
+    expect(within(grid).getByRole("img", { name: "Game Boy" })).toBeInTheDocument();
   });
 
   it("ordena sempre por ano, sem seletor de ordenação", async () => {
     fetchMock.mockResolvedValue([CONSOLES[2], CONSOLES[0], CONSOLES[1]]);
     render(<ConsoleCatalogPage onSelect={noop} />);
-    await screen.findByRole("region", { name: "Anos 1980" });
+    await screen.findByRole("list");
 
     expect(gridOrder()).toEqual(["Master System", "Game Boy", "PlayStation 2"]);
     expect(screen.queryByRole("radio")).toBeNull();
   });
 
-  it("agrupa por década sem exibir a contagem de consoles", async () => {
+  it("mostra todos os consoles numa grade só, sem separar por década", async () => {
     fetchMock.mockResolvedValue(CONSOLES);
     render(<ConsoleCatalogPage onSelect={noop} />);
-    await screen.findByRole("region", { name: "Anos 1980" });
+    await screen.findByRole("list");
 
-    expect(screen.getByRole("heading", { level: 2, name: "Anos 1980" })).toHaveTextContent(
-      /^Anos 1980$/,
-    );
-    expect(screen.getByRole("region", { name: "Anos 2000" })).toBeInTheDocument();
+    expect(screen.getAllByRole("list")).toHaveLength(1);
+    expect(screen.queryByRole("heading", { level: 2 })).toBeNull();
+    expect(screen.queryByRole("region")).toBeNull();
+    expect(screen.queryByText(/^Anos \d{4}$/)).toBeNull();
     expect(screen.queryByText(/\d+ consoles?$/)).toBeNull();
   });
-
-
-
 
   it("cada quadro é um botão nomeado pelo console que abre seus jogos", async () => {
     fetchMock.mockResolvedValue(CONSOLES);
     const onSelect = vi.fn();
     render(<ConsoleCatalogPage onSelect={onSelect} />);
-    await screen.findByRole("region", { name: "Anos 1980" });
+    await screen.findByRole("list");
 
     fireEvent.click(screen.getByRole("button", { name: "Game Boy" }));
 
@@ -144,7 +141,7 @@ describe("ConsoleCatalogPage", () => {
   it("mostra o nome quando o console não tem logo", async () => {
     fetchMock.mockResolvedValue([{ ...CONSOLES[0], id: "sem-logo", name: "Console Teste" }]);
     render(<ConsoleCatalogPage onSelect={noop} />);
-    await screen.findByRole("region", { name: "Anos 1980" });
+    await screen.findByRole("list");
 
     expect(screen.queryByRole("img")).toBeNull();
     expect(screen.getByText("Console Teste")).toBeInTheDocument();
@@ -166,7 +163,7 @@ describe("ConsoleCatalogPage", () => {
 
     fireEvent.click(within(alert).getByRole("button", { name: "Tentar novamente" }));
 
-    expect(await screen.findByRole("region", { name: "Anos 1980" })).toBeInTheDocument();
+    expect(await screen.findByRole("list")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
@@ -180,14 +177,14 @@ describe("ConsoleCatalogPage", () => {
         <ConsoleCatalogPage onSelect={noop} />
       </StrictMode>,
     );
-    await screen.findByRole("region", { name: "Anos 1980" });
+    await screen.findByRole("list");
 
     await act(async () => {
       stale.resolve([]);
       await stale.promise;
     });
 
-    expect(screen.getByRole("region", { name: "Anos 1980" })).toBeInTheDocument();
+    expect(gridOrder()).toEqual(["Master System", "Game Boy", "PlayStation 2"]);
     expect(screen.queryByText("Nenhum console encontrado no catálogo.")).toBeNull();
   });
 });
