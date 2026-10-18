@@ -118,6 +118,58 @@ impl Exe {
     }
 }
 
+/// Resolução interna do desenho: melhoria de imagem só de apresentação.
+///
+/// Acima de [`Native`](Self::Native), polígonos e linhas também são
+/// desenhados numa VRAM ampliada, que gera a imagem mostrada. A VRAM 1×
+/// continua sendo a fonte de verdade para a CPU, as cópias, as texturas e
+/// o MDEC: a emulação, o tempo, os saves e o estado salvo não mudam.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum InternalResolution {
+    /// 1×, pixel a pixel como o console.
+    #[default]
+    Native,
+    X2,
+    X3,
+    X4,
+}
+
+impl InternalResolution {
+    /// Fator de escala (1 a 4).
+    pub const fn scale(self) -> usize {
+        match self {
+            Self::Native => 1,
+            Self::X2 => 2,
+            Self::X3 => 3,
+            Self::X4 => 4,
+        }
+    }
+
+    /// Resolução com o fator `scale`; `None` fora de 1 a 4.
+    pub const fn from_scale(scale: usize) -> Option<Self> {
+        Some(match scale {
+            1 => Self::Native,
+            2 => Self::X2,
+            3 => Self::X3,
+            4 => Self::X4,
+            _ => return None,
+        })
+    }
+}
+
+/// Melhorias do desenho, só de apresentação: a VRAM 1× continua sendo a
+/// fonte de verdade, então a emulação, o tempo, os saves e o estado salvo
+/// não mudam com elas.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Enhancements {
+    pub resolution: InternalResolution,
+    /// Cor de 24 bits no desenho, sem o pontilhado de 15 bits.
+    pub true_color: bool,
+    /// Vértices com a fração que o GTE calculou (PGXP), sem o tremor dos
+    /// polígonos; aparece a partir de 2×.
+    pub precise_geometry: bool,
+}
+
 /// Confere se `bytes` tem o tamanho de um BIOS do PlayStation.
 pub fn check_bios(bytes: &[u8]) -> Result<(), BiosError> {
     if bytes.len() == BIOS_SIZE {
@@ -255,6 +307,17 @@ impl Console {
     /// altura), que muda com o modo de vídeo.
     pub fn framebuffer(&self) -> (&[u32], (usize, usize)) {
         self.bus.gpu.frame()
+    }
+
+    /// Troca as melhorias do desenho. Vale a partir do próximo quadro; a
+    /// cópia melhorada da VRAM é refeita a partir da VRAM 1× (sem perder o
+    /// que já está na tela).
+    pub fn set_enhancements(&mut self, enhancements: Enhancements) {
+        self.bus.gpu.set_enhancements(enhancements);
+    }
+
+    pub fn enhancements(&self) -> Enhancements {
+        self.bus.gpu.enhancements()
     }
 
     /// VRAM inteira (1024×512 pixels de 15 bits), para depuração e testes.

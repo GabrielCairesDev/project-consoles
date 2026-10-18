@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 
 use player::controls::{BindingError, Bindings, System};
 use player::image::{
-    AspectRatio, Fit, FrameBlend, ImageSettings, Palette, Scaler, ScreenEffect, Signal,
+    AspectRatio, ColorDepth, Fit, FrameBlend, Geometry, ImageSettings, Palette, Resolution, Scaler,
+    ScreenEffect, Signal,
 };
 use serde::{Deserialize, Serialize};
 
@@ -83,6 +84,12 @@ impl From<StoredConsoleSettings> for ConsoleSettings {
 #[serde(rename_all = "camelCase", default)]
 pub struct ImageChoices {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color_depth: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub geometry: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub palette: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scaler: Option<String>,
@@ -101,6 +108,9 @@ pub struct ImageChoices {
 impl From<ImageSettings> for ImageChoices {
     fn from(image: ImageSettings) -> Self {
         Self {
+            resolution: Some(image.resolution.id().to_owned()),
+            color_depth: Some(image.color_depth.id().to_owned()),
+            geometry: Some(image.geometry.id().to_owned()),
             palette: Some(image.palette.id().to_owned()),
             scaler: Some(image.scaler.id().to_owned()),
             aspect: Some(image.aspect.id().to_owned()),
@@ -119,6 +129,24 @@ struct Technique<T: 'static> {
     from_id: fn(&str) -> Option<T>,
     available: fn(System) -> &'static [T],
 }
+
+const RESOLUTION: Technique<Resolution> = Technique {
+    name: "a resolução interna",
+    from_id: Resolution::from_id,
+    available: Resolution::available,
+};
+
+const COLOR_DEPTH: Technique<ColorDepth> = Technique {
+    name: "a cor",
+    from_id: ColorDepth::from_id,
+    available: ColorDepth::available,
+};
+
+const GEOMETRY: Technique<Geometry> = Technique {
+    name: "a geometria",
+    from_id: Geometry::from_id,
+    available: Geometry::available,
+};
 
 const PALETTE: Technique<Palette> = Technique {
     name: "a paleta",
@@ -197,10 +225,13 @@ impl<T: Copy + PartialEq> Technique<T> {
 }
 
 impl ImageChoices {
-    /// Cor e escala desligadas, sem depender do console (o resto vale o
-    /// padrão dele).
+    /// Núcleo, cor e escala desligados, sem depender do console (o resto
+    /// vale o padrão dele).
     pub fn filters_off() -> Self {
         Self {
+            resolution: Some(Resolution::Native.id().to_owned()),
+            color_depth: Some(ColorDepth::Native.id().to_owned()),
+            geometry: Some(Geometry::Native.id().to_owned()),
             palette: Some(Palette::Core.id().to_owned()),
             scaler: Some(Scaler::Nearest.id().to_owned()),
             ..Self::default()
@@ -213,6 +244,17 @@ impl ImageChoices {
     pub fn resolve(&self, system: System) -> ImageSettings {
         let recommended = ImageSettings::recommended(system);
         ImageSettings {
+            resolution: RESOLUTION.resolve(
+                system,
+                self.resolution.as_deref(),
+                recommended.resolution,
+            ),
+            color_depth: COLOR_DEPTH.resolve(
+                system,
+                self.color_depth.as_deref(),
+                recommended.color_depth,
+            ),
+            geometry: GEOMETRY.resolve(system, self.geometry.as_deref(), recommended.geometry),
             palette: PALETTE.resolve(system, self.palette.as_deref(), recommended.palette),
             scaler: SCALER.resolve(system, self.scaler.as_deref(), recommended.scaler),
             aspect: ASPECT.resolve(system, self.aspect.as_deref(), recommended.aspect),
@@ -226,6 +268,9 @@ impl ImageChoices {
     /// Confere escolhas vindas da interface: qualquer valor que não exista
     /// no console é recusado, sem gravar nada.
     pub fn check(&self, system: System) -> Result<(), String> {
+        RESOLUTION.check(system, self.resolution.as_deref())?;
+        COLOR_DEPTH.check(system, self.color_depth.as_deref())?;
+        GEOMETRY.check(system, self.geometry.as_deref())?;
         PALETTE.check(system, self.palette.as_deref())?;
         SCALER.check(system, self.scaler.as_deref())?;
         ASPECT.check(system, self.aspect.as_deref())?;
@@ -497,6 +542,22 @@ mod tests {
         };
         assert_eq!(ghosting.check(System::GameBoy), Ok(()));
         assert!(ghosting.check(System::Genesis).is_err());
+        let sharp_3d = ImageChoices {
+            resolution: Some("4x".to_owned()),
+            color_depth: Some("24-bit".to_owned()),
+            geometry: Some("precise".to_owned()),
+            ..ImageChoices::default()
+        };
+        assert_eq!(sharp_3d.check(System::PlayStation), Ok(()));
+        assert_eq!(
+            sharp_3d.check(System::Genesis),
+            Err("A resolução interna \"4x\" não existe para este console.".to_owned())
+        );
+        let eight_x = ImageChoices {
+            resolution: Some("8x".to_owned()),
+            ..ImageChoices::default()
+        };
+        assert!(eight_x.check(System::PlayStation).is_err());
         let stretched = ImageChoices {
             fit: Some("stretch".to_owned()),
             ..ImageChoices::default()

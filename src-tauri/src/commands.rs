@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use player::controls::{Bindings, SUPPORTED_KEYS, System};
 use player::image::{
-    AspectRatio, Fit, FrameBlend, ImageSettings, Palette, Scaler, ScreenEffect, Signal,
+    AspectRatio, ColorDepth, Fit, FrameBlend, Geometry, ImageSettings, Palette, Resolution, Scaler,
+    ScreenEffect, Signal,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
@@ -98,6 +99,12 @@ pub struct ConsoleInfo {
 pub struct ImageInfo {
     /// Paletas do console ([`Palette::id`]), na ordem de exibição.
     palettes: Vec<&'static str>,
+    /// Resoluções internas ([`Resolution::id`]); as acima de 2× são pesadas.
+    resolutions: Vec<&'static str>,
+    /// Profundidades de cor do desenho ([`ColorDepth::id`]).
+    color_depths: Vec<&'static str>,
+    /// Precisões de geometria ([`Geometry::id`]).
+    geometries: Vec<&'static str>,
     /// Ampliações do console ([`Scaler::id`]), na ordem de exibição.
     scalers: Vec<&'static str>,
     /// Proporções do console ([`AspectRatio::id`]).
@@ -119,6 +126,15 @@ impl ImageInfo {
     fn for_system(system: System) -> Self {
         Self {
             palettes: Palette::available(system).iter().map(|p| p.id()).collect(),
+            resolutions: Resolution::available(system)
+                .iter()
+                .map(|r| r.id())
+                .collect(),
+            color_depths: ColorDepth::available(system)
+                .iter()
+                .map(|c| c.id())
+                .collect(),
+            geometries: Geometry::available(system).iter().map(|g| g.id()).collect(),
             scalers: Scaler::available(system).iter().map(|s| s.id()).collect(),
             aspects: AspectRatio::available(system)
                 .iter()
@@ -900,6 +916,13 @@ mod tests {
         assert_eq!(gb_image.aspects, ["square"]);
         assert_eq!(gb_image.screens, ["none", "lcd-grid"]);
         assert_eq!(gb_image.blends, ["off", "on"]);
+        assert_eq!(gb_image.resolutions, ["1x"]);
+        assert_eq!(ps1_image.resolutions, ["1x", "2x", "3x", "4x"]);
+        assert_eq!(ps1_image.color_depths, ["15-bit", "24-bit"]);
+        assert_eq!(ps1_image.geometries, ["native", "precise"]);
+        assert_eq!(ps1_image.recommended.resolution.as_deref(), Some("2x"));
+        assert_eq!(ps1_image.recommended.color_depth.as_deref(), Some("24-bit"));
+        assert_eq!(ps1_image.original.resolution.as_deref(), Some("1x"));
         assert_eq!(gb_image.signals, ["rgb"]);
         assert_eq!(sms_image.screens, ["none", "scanlines", "crt"]);
         assert_eq!(sms_image.signals, ["rgb", "composite"]);

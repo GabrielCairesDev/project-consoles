@@ -45,6 +45,12 @@ pub const SCREEN_FLAG: &str = "--screen";
 pub const SIGNAL_FLAG: &str = "--signal";
 /// Argumento com o rastro do LCD ([`player::image::FrameBlend::id`]).
 pub const BLEND_FLAG: &str = "--blend";
+/// Argumento com a resolução interna ([`player::image::Resolution::id`]).
+pub const RESOLUTION_FLAG: &str = "--resolution";
+/// Argumento com a cor do desenho ([`player::image::ColorDepth::id`]).
+pub const COLOR_FLAG: &str = "--color";
+/// Argumento com a geometria ([`player::image::Geometry::id`]).
+pub const GEOMETRY_FLAG: &str = "--geometry";
 
 /// Núcleo que roda jogos deste console, se houver.
 pub fn system_for(console_id: &str) -> Option<System> {
@@ -148,7 +154,13 @@ fn play_command(exe: &Path, rom: &Path, options: &LaunchOptions) -> Command {
         .arg(SIGNAL_FLAG)
         .arg(options.image.signal.id())
         .arg(BLEND_FLAG)
-        .arg(options.image.blend.id());
+        .arg(options.image.blend.id())
+        .arg(RESOLUTION_FLAG)
+        .arg(options.image.resolution.id())
+        .arg(COLOR_FLAG)
+        .arg(options.image.color_depth.id())
+        .arg(GEOMETRY_FLAG)
+        .arg(options.image.geometry.id());
     if let Some(state) = &options.state_path {
         command.arg(STATE_FLAG).arg(state);
     }
@@ -342,7 +354,13 @@ pub(crate) mod tests {
                 SIGNAL_FLAG,
                 "rgb",
                 BLEND_FLAG,
-                "off"
+                "off",
+                RESOLUTION_FLAG,
+                "1x",
+                COLOR_FLAG,
+                "15-bit",
+                GEOMETRY_FLAG,
+                "native"
             ]
         );
         let with_state = LaunchOptions {
@@ -373,6 +391,12 @@ pub(crate) mod tests {
                 "rgb",
                 BLEND_FLAG,
                 "off",
+                RESOLUTION_FLAG,
+                "1x",
+                COLOR_FLAG,
+                "15-bit",
+                GEOMETRY_FLAG,
+                "native",
                 STATE_FLAG,
                 "/dados/sonic.state",
                 BATTERY_FLAG,
@@ -396,7 +420,7 @@ pub(crate) mod tests {
             ..options()
         };
         assert_eq!(
-            args(&plain)[6..20],
+            args(&plain)[6..26],
             [
                 SCALER_FLAG,
                 "nearest",
@@ -411,7 +435,13 @@ pub(crate) mod tests {
                 SIGNAL_FLAG,
                 "rgb",
                 BLEND_FLAG,
-                "off"
+                "off",
+                RESOLUTION_FLAG,
+                "1x",
+                COLOR_FLAG,
+                "15-bit",
+                GEOMETRY_FLAG,
+                "native"
             ]
         );
     }

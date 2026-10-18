@@ -4,6 +4,8 @@
 
 mod render;
 
+use crate::Enhancements;
+use crate::gte::Projected;
 use render::{Renderer, VRAM_HEIGHT, VRAM_WIDTH};
 
 /// Clock da GPU = 11/7 do clock da CPU.
@@ -52,6 +54,10 @@ pub(crate) struct Gpu {
     /// Imagem do último quadro, `0x00RRGGBB`, e o tamanho.
     frame: Vec<u32>,
     frame_size: (usize, usize),
+    /// O mesmo quadro tirado da cópia melhorada da VRAM, quando ela existe
+    /// e o modo é de 15 bits (`None` usa `frame`). Só para a apresentação.
+    enhanced_frame: Vec<u32>,
+    enhanced_size: Option<(usize, usize)>,
 }
 
 impl Default for Gpu {
@@ -74,6 +80,8 @@ impl Default for Gpu {
             frame_done: false,
             frame: vec![0; 320 * 240],
             frame_size: (320, 240),
+            enhanced_frame: Vec::new(),
+            enhanced_size: None,
         };
         gpu.reset();
         gpu
@@ -268,11 +276,53 @@ impl Gpu {
                 }
             }
         }
+        self.enhanced_size = None;
+        // 24 bits (vídeos do MDEC) são bytes, não pixels: ficam em 1×.
+        if !rgb24 && let Some(up) = self.renderer.enhanced() {
+            let s = up.scale();
+            let (width, height) = (width * s, height * s);
+            self.enhanced_frame.resize(width * height, 0);
+            let (sx, sy) = (sx * s, sy * s);
+            for (y, row) in self.enhanced_frame.chunks_exact_mut(width).enumerate() {
+                let line = up.row((sy + y) % up.height());
+                for (x, out) in row.iter_mut().enumerate() {
+                    // sx < largura da VRAM e x < 640·s: no máximo uma volta.
+                    let vx = sx + x;
+                    let vx = if vx >= line.len() {
+                        vx - line.len()
+                    } else {
+                        vx
+                    };
+                    *out = line[vx] & 0x00FF_FFFF;
+                }
+            }
+            self.enhanced_size = Some((width, height));
+        }
     }
 
-    /// Imagem do último quadro mostrado e o tamanho (largura, altura).
+    /// Imagem do último quadro mostrado e o tamanho (largura, altura), com
+    /// as melhorias do desenho quando ligadas.
     pub(crate) fn frame(&self) -> (&[u32], (usize, usize)) {
-        (&self.frame, self.frame_size)
+        match self.enhanced_size {
+            Some(size) => (&self.enhanced_frame, size),
+            None => (&self.frame, self.frame_size),
+        }
+    }
+
+    /// Troca as melhorias do desenho. A imagem melhorada aparece a partir
+    /// do próximo quadro.
+    pub(crate) fn set_enhancements(&mut self, enhancements: Enhancements) {
+        self.renderer.set_enhancements(enhancements);
+        self.enhanced_size = None;
+    }
+
+    pub(crate) fn enhancements(&self) -> Enhancements {
+        self.renderer.enhancements()
+    }
+
+    /// Vértices que o GTE acabou de projetar (para a geometria precisa).
+    pub(crate) fn remember_vertices(&mut self, vertices: &[Projected]) {
+        self.renderer.remember_vertices(vertices);
     }
 
     pub(crate) fn status(&self) -> u32 {
@@ -447,5 +497,72 @@ mod tests {
         assert_ne!(gpu.status() & (1 << 16), 0);
         gpu.gp1(0x0300_0000);
         assert_eq!(gpu.status() & (1 << 23), 0, "display ligado");
+    }
+
+    fn at_scale(scale: usize) -> Enhancements {
+        Enhancements {
+            resolution: crate::InternalResolution::from_scale(scale).expect("1 a 4"),
+            ..Enhancements::default()
+        }
+    }
+
+    /// GPU com o display ligado em 320×240 e um retângulo azul em (16, 4).
+    fn gpu_with_picture(scale: usize) -> Gpu {
+        let mut gpu = Gpu::default();
+        gpu.set_enhancements(at_scale(scale));
+        gpu.gp1(0x0300_0000);
+        gpu.gp1(0x0800_0001);
+        for word in [0x02FF_0000, 4 << 16 | 16, 3 << 16 | 16] {
+            gpu.gp0(word);
+        }
+        gpu.capture_frame();
+        gpu
+    }
+
+    #[test]
+    fn native_frame_is_unchanged_at_scale_one() {
+        let gpu = gpu_with_picture(1);
+        let (pixels, size) = gpu.frame();
+        assert_eq!(size, (320, 240));
+        assert_eq!(pixels, &gpu.frame[..]);
+        assert_eq!(pixels[4 * 320 + 16], 0x0000_00FF);
+        assert_eq!(pixels[4 * 320 + 15], 0);
+    }
+
+    #[test]
+    fn upscaled_frame_is_scale_times_larger() {
+        let gpu = gpu_with_picture(3);
+        let (pixels, (width, height)) = gpu.frame();
+        assert_eq!((width, height), (960, 720));
+        let (native, _) = (&gpu.frame, gpu.frame_size);
+        for y in 0..height {
+            for x in 0..width {
+                assert_eq!(pixels[y * width + x], native[(y / 3) * 320 + x / 3]);
+            }
+        }
+    }
+
+    #[test]
+    fn rgb24_and_disabled_display_stay_native() {
+        let mut gpu = gpu_with_picture(2);
+        gpu.gp1(0x0800_0011); // 24 bits
+        gpu.capture_frame();
+        assert_eq!(gpu.frame().1, (320, 240));
+        gpu.gp1(0x0800_0001);
+        gpu.gp1(0x0300_0001);
+        gpu.capture_frame();
+        assert_eq!(gpu.frame().1, (320, 240));
+    }
+
+    #[test]
+    fn changing_the_scale_waits_for_the_next_frame() {
+        let mut gpu = gpu_with_picture(2);
+        assert_eq!(gpu.frame().1, (640, 480));
+        gpu.set_enhancements(at_scale(1));
+        assert_eq!(gpu.frame().1, (320, 240));
+        gpu.set_enhancements(at_scale(4));
+        assert_eq!(gpu.frame().1, (320, 240), "sem quadro ampliado ainda");
+        gpu.capture_frame();
+        assert_eq!(gpu.frame().1, (1280, 960));
     }
 }

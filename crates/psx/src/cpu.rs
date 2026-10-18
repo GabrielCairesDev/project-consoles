@@ -172,6 +172,7 @@ impl Cpu {
                 let next = bus.peek_code(self.pc);
                 if next >> 25 == 0x25 {
                     self.gte_ready = bus.now + self.gte.command(next);
+                    bus.gpu.remember_vertices(self.gte.projected());
                 }
             }
             self.exception(Exception::Interrupt);
@@ -680,6 +681,7 @@ impl Cpu {
         self.wait_gte(bus);
         if i & (1 << 25) != 0 {
             self.gte_ready = bus.now + self.gte.command(i);
+            bus.gpu.remember_vertices(self.gte.projected());
             return;
         }
         match rs(i) {

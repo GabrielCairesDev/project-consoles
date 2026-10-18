@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Console } from "../../domain/console";
+import type { ImageChoices } from "../../domain/image";
 import { chooseBios, getBios } from "../../services/bios";
 import { getConsoleSettings, saveConsoleSettings } from "../../services/consoleSettings";
 import { SettingsDialog } from "./SettingsDialog";
@@ -30,7 +31,7 @@ const SMS: Console = {
   playable: true,
   needsBios: false,
   resumable: true,
-  image: { aspects: ["square"], fits: ["integer"], screens: ["none"], signals: ["rgb"], blends: ["off"], palettes: ["core"], scalers: ["nearest", "epx"], original: { scaler: "nearest" }, recommended: { scaler: "epx" } },
+  image: { aspects: ["square"], fits: ["integer"], screens: ["none"], signals: ["rgb"], blends: ["off"], resolutions: ["1x"], colorDepths: ["15-bit"], geometries: ["native"], palettes: ["core"], scalers: ["nearest", "epx"], original: { scaler: "nearest" }, recommended: { scaler: "epx" } },
 };
 
 const PS1: Console = {
@@ -41,7 +42,7 @@ const PS1: Console = {
   releaseYear: 1994,
   needsBios: true,
   resumable: false,
-  image: { aspects: ["square"], fits: ["integer"], screens: ["none"], signals: ["rgb"], blends: ["off"], palettes: ["core"], scalers: ["nearest", "bilinear"], original: { scaler: "nearest" }, recommended: { scaler: "bilinear" } },
+  image: { aspects: ["square"], fits: ["integer"], screens: ["none"], signals: ["rgb"], blends: ["off"], resolutions: ["1x"], colorDepths: ["15-bit"], geometries: ["native"], palettes: ["core"], scalers: ["nearest", "bilinear"], original: { scaler: "nearest" }, recommended: { scaler: "bilinear" } },
 };
 
 function Harness({
@@ -268,6 +269,62 @@ describe("SettingsDialog", () => {
     expect(within(presets).getByRole("radio", { name: "Recomendado" })).toBeChecked();
   });
 
+  it("PlayStation escolhe resolução, cor e geometria do 3D, com aviso nas pesadas", async () => {
+    const recommended: ImageChoices = {
+      resolution: "2x",
+      colorDepth: "24-bit",
+      geometry: "native",
+      scaler: "bilinear",
+    };
+    const playStation: Console = {
+      ...SMS,
+      id: "playstation",
+      name: "PlayStation",
+      image: {
+        aspects: ["tv"],
+        fits: ["integer", "fill"],
+        screens: ["none", "scanlines", "crt"],
+        signals: ["rgb", "composite"],
+        blends: ["off"],
+        resolutions: ["1x", "2x", "3x", "4x"],
+        colorDepths: ["15-bit", "24-bit"],
+        geometries: ["native", "precise"],
+        palettes: ["core"],
+        scalers: ["nearest", "bilinear", "sharp-bilinear"],
+        original: { resolution: "1x", colorDepth: "15-bit", geometry: "native", scaler: "nearest" },
+        recommended,
+      },
+    };
+    getMock.mockResolvedValue({ resume: true, image: recommended });
+    render(<Harness console={playStation} />);
+
+    const resolution = await screen.findByRole("radiogroup", { name: "Resolução do 3D" });
+    expect(within(resolution).getByRole("radio", { name: "2×" })).toBeChecked();
+    expect(within(resolution).getByRole("radio", { name: "4×" })).toHaveAccessibleDescription(/Pesada/);
+    expect(within(resolution).getByRole("radio", { name: "2×" })).not.toHaveAccessibleDescription(/Pesada/);
+    fireEvent.click(within(resolution).getByRole("radio", { name: "4×" }));
+    expect(saveMock).toHaveBeenLastCalledWith("playstation", {
+      resume: true,
+      image: { ...recommended, resolution: "4x" },
+    });
+    expect(await screen.findByRole("radio", { name: "Personalizado" })).toBeChecked();
+
+    const geometry = screen.getByRole("radiogroup", { name: "Geometria" });
+    fireEvent.click(within(geometry).getByRole("radio", { name: "Precisa (PGXP)" }));
+    expect(saveMock).toHaveBeenLastCalledWith("playstation", {
+      resume: true,
+      image: { ...recommended, resolution: "4x", geometry: "precise" },
+    });
+    expect(
+      within(screen.getByRole("radiogroup", { name: "Cor do 3D" })).getByRole("radio", { name: "24 bits" }),
+    ).toBeChecked();
+
+    cleanup();
+    render(<Harness />);
+    await screen.findByRole("radiogroup", { name: "Ampliação" });
+    expect(screen.queryByRole("radiogroup", { name: "Resolução do 3D" })).not.toBeInTheDocument();
+  });
+
   it("Game Boy escolhe a paleta, e os outros consoles não mostram a opção", async () => {
     const gameBoy: Console = {
       ...SMS,
@@ -280,6 +337,9 @@ describe("SettingsDialog", () => {
         screens: ["none", "lcd-grid"],
         signals: ["rgb"],
         blends: ["off", "on"],
+        resolutions: ["1x"],
+        colorDepths: ["15-bit"],
+        geometries: ["native"],
         palettes: ["core", "dmg", "pocket"],
         scalers: ["nearest", "epx", "mmpx", "sharp-bilinear"],
         original: { palette: "core", scaler: "nearest" },

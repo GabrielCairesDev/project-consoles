@@ -41,6 +41,15 @@ enum Translation {
     None,
 }
 
+/// Vértice projetado pelo RTPS/RTPT: a palavra SXY que o jogo vai ler e a
+/// fração (16 bits) de x e y que o hardware descarta. Só a imagem usa
+/// (geometria precisa); não faz parte do estado do GTE.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub(crate) struct Projected {
+    pub(crate) word: u32,
+    pub(crate) fraction: (u16, u16),
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct Gte {
     // Registradores de dados.
@@ -70,6 +79,9 @@ pub(crate) struct Gte {
     zsf3: i16,
     zsf4: i16,
     flag: u32,
+    /// Vértices projetados pelo último comando (até 3, no RTPT).
+    projected: [Projected; 3],
+    projected_len: usize,
 }
 
 fn pack(low: i16, high: i16) -> u32 {
@@ -214,11 +226,17 @@ impl Gte {
     }
 
     /// Executa um comando; devolve a duração em ciclos.
+    /// Vértices projetados pelo último comando, com a fração.
+    pub(crate) fn projected(&self) -> &[Projected] {
+        &self.projected[..self.projected_len]
+    }
+
     pub(crate) fn command(&mut self, instruction: u32) -> u64 {
         let sf = instruction & (1 << 19) != 0;
         let shift = if sf { 12 } else { 0 };
         let lm = instruction & (1 << 10) != 0;
         self.flag = 0;
+        self.projected_len = 0;
         let cycles = match instruction & 0x3F {
             0x01 => {
                 self.rtp(0, shift, lm, true);
@@ -509,7 +527,17 @@ impl Gte {
         let div = self.divide();
         let x = self.check_mac0(i64::from(self.ofx) + i64::from(self.ir[1]) * div);
         let y = self.check_mac0(i64::from(self.ofy) + i64::from(self.ir[2]) * div);
-        self.push_sxy(x >> 16, y >> 16);
+        let (sx, sy) = (x >> 16, y >> 16);
+        self.push_sxy(sx, sy);
+        // Saturado, o vértice não é o da conta: fica sem fração.
+        let range = -0x400..=0x3FF;
+        if range.contains(&sx) && range.contains(&sy) {
+            self.projected[self.projected_len] = Projected {
+                word: pack(sx as i16, sy as i16),
+                fraction: ((x & 0xFFFF) as u16, (y & 0xFFFF) as u16),
+            };
+            self.projected_len += 1;
+        }
         if last {
             let depth = i64::from(self.dqb) + i64::from(self.dqa) * div;
             self.set_mac0(depth);
@@ -724,6 +752,53 @@ mod tests {
         // x = 0x40 × 0x100 / 0x200 = 0x20; y = −0x10.
         assert_eq!(gte.read_data(14), pack(0x20, -0x10));
         assert_eq!(gte.read_control(31), 0);
+    }
+
+    #[test]
+    fn rtps_keeps_the_fraction_the_hardware_drops() {
+        let mut gte = Gte::default();
+        gte.write_control(0, 0x1000);
+        gte.write_control(2, 0x1000);
+        gte.write_control(4, 0x1000);
+        gte.write_control(26, 0x100);
+        gte.write_data(0, pack(0x41, -0x20));
+        gte.write_data(1, 0x200);
+        gte.command(0x0008_0001); // RTPS, sf = 1
+        // x = 0x41 × 0x100 / 0x200 = 0x20,8: o SXY guarda 0x20 e a fração
+        // meio pixel.
+        assert_eq!(gte.read_data(14), pack(0x20, -0x10));
+        assert_eq!(
+            gte.projected(),
+            [Projected {
+                word: pack(0x20, -0x10),
+                fraction: (0x8000, 0),
+            }]
+        );
+        gte.write_control(24, 0x7FFF_0000); // OFX enorme: SX satura
+        gte.command(0x0008_0001);
+        assert!(
+            gte.projected().is_empty(),
+            "vértice saturado fica sem fração"
+        );
+        gte.command(0x06); // NCLIP não projeta
+        assert!(gte.projected().is_empty());
+    }
+
+    #[test]
+    fn rtpt_projects_three_vertices() {
+        let mut gte = Gte::default();
+        gte.write_control(0, 0x1000);
+        gte.write_control(2, 0x1000);
+        gte.write_control(4, 0x1000);
+        gte.write_control(26, 0x100);
+        for (i, x) in [0x40, 0x41, 0x42].into_iter().enumerate() {
+            gte.write_data(i * 2, pack(x, 0));
+            gte.write_data(i * 2 + 1, 0x200);
+        }
+        gte.command(0x0008_0030); // RTPT, sf = 1
+        let fractions: Vec<_> = gte.projected().iter().map(|p| p.fraction.0).collect();
+        assert_eq!(fractions, [0, 0x8000, 0]);
+        assert_eq!(gte.projected()[2].word, gte.read_data(14));
     }
 
     #[test]

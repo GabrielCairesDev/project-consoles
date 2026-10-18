@@ -4,6 +4,10 @@
 //! [`ImageSettings`], com os valores que cada console aceita. Os presets
 //! Original e Recomendado só preenchem os campos; o preset atual é
 //! deduzido comparando com eles, nunca guardado à parte.
+//!
+//! As técnicas de núcleo ([`Resolution`], [`ColorDepth`], [`Geometry`])
+//! mudam o desenho dentro do núcleo do console; as outras são etapas do
+//! player. Nenhuma muda a emulação.
 
 use std::fmt;
 
@@ -276,9 +280,112 @@ impl FrameBlend {
     }
 }
 
+/// Resolução interna do desenho 3D (etapa de núcleo, PlayStation).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Resolution {
+    /// 1×, como o console.
+    Native,
+    X2,
+    /// Pesada: pode passar do tempo de um quadro em cenas cheias.
+    X3,
+    /// Pesada: pode passar do tempo de um quadro em cenas cheias.
+    X4,
+}
+
+impl Resolution {
+    pub const ALL: [Self; 4] = [Self::Native, Self::X2, Self::X3, Self::X4];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Native => "1x",
+            Self::X2 => "2x",
+            Self::X3 => "3x",
+            Self::X4 => "4x",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|resolution| resolution.id() == id)
+    }
+
+    pub fn available(system: System) -> &'static [Self] {
+        match system {
+            System::PlayStation => &Self::ALL,
+            System::MasterSystem | System::Genesis | System::GameBoy => &[Self::Native],
+        }
+    }
+}
+
+/// Profundidade de cor do desenho (etapa de núcleo, PlayStation).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColorDepth {
+    /// 15 bits com o pontilhado do console.
+    Native,
+    /// 24 bits, sem o pontilhado (que só disfarçava os 15 bits).
+    TrueColor,
+}
+
+impl ColorDepth {
+    pub const ALL: [Self; 2] = [Self::Native, Self::TrueColor];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Native => "15-bit",
+            Self::TrueColor => "24-bit",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|depth| depth.id() == id)
+    }
+
+    pub fn available(system: System) -> &'static [Self] {
+        match system {
+            System::PlayStation => &Self::ALL,
+            System::MasterSystem | System::Genesis | System::GameBoy => &[Self::Native],
+        }
+    }
+}
+
+/// Precisão dos vértices (etapa de núcleo, PlayStation).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Geometry {
+    /// Vértices inteiros, como o console (polígonos tremem).
+    Native,
+    /// Com a fração calculada pelo GTE (PGXP); aparece a partir de 2×.
+    Precise,
+}
+
+impl Geometry {
+    pub const ALL: [Self; 2] = [Self::Native, Self::Precise];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Native => "native",
+            Self::Precise => "precise",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|geometry| geometry.id() == id)
+    }
+
+    pub fn available(system: System) -> &'static [Self] {
+        match system {
+            System::PlayStation => &Self::ALL,
+            System::MasterSystem | System::Genesis | System::GameBoy => &[Self::Native],
+        }
+    }
+}
+
 /// Configuração de imagem de um console: uma escolha por técnica.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageSettings {
+    pub resolution: Resolution,
+    pub color_depth: ColorDepth,
+    pub geometry: Geometry,
     pub palette: Palette,
     pub scaler: Scaler,
     pub aspect: AspectRatio,
@@ -289,9 +396,9 @@ pub struct ImageSettings {
 }
 
 impl ImageSettings {
-    /// Preset Original: etapas de cor e escala desligadas (pixel a pixel) e
-    /// a apresentação de sempre do console: pixels quadrados em escala
-    /// inteira nos 2D, tela 4:3 preenchida no PlayStation.
+    /// Preset Original: etapas de núcleo, cor e escala desligadas (pixel a
+    /// pixel) e a apresentação de sempre do console: pixels quadrados em
+    /// escala inteira nos 2D, tela 4:3 preenchida no PlayStation.
     pub fn original(system: System) -> Self {
         let (aspect, fit) = match system {
             System::MasterSystem | System::Genesis | System::GameBoy => {
@@ -300,6 +407,9 @@ impl ImageSettings {
             System::PlayStation => (AspectRatio::Tv, Fit::Fill),
         };
         Self {
+            resolution: Resolution::Native,
+            color_depth: ColorDepth::Native,
+            geometry: Geometry::Native,
             palette: Palette::Core,
             scaler: Scaler::Nearest,
             aspect,
@@ -312,9 +422,13 @@ impl ImageSettings {
 
     /// Preset Recomendado do console (o padrão), escolhido pelo hardware
     /// original: contornos de pixel art nos 2D, suavização no 3D e, no
-    /// Game Boy, o verde da tela original. A apresentação é a do Original,
-    /// e os efeitos de tela, sinal e rastro ficam desligados (são escolha
-    /// do usuário, não correção).
+    /// Game Boy, o verde da tela original. No PlayStation, o 3D em 2× (a
+    /// maior resolução que cabe no tempo de um quadro em cenas cheias) e em
+    /// 24 bits, sem o pontilhado que só disfarçava os 15 bits. A geometria
+    /// precisa fica de fora: em jogos que mexem nos vértices fora do GTE ela
+    /// pode desalinhar peças. A apresentação é a do Original, e os efeitos de
+    /// tela, sinal e rastro ficam desligados (são escolha do usuário, não
+    /// correção).
     pub fn recommended(system: System) -> Self {
         let scaler = match system {
             System::MasterSystem | System::Genesis | System::GameBoy => Scaler::Epx,
@@ -324,7 +438,15 @@ impl ImageSettings {
             System::GameBoy => Palette::Dmg,
             System::MasterSystem | System::Genesis | System::PlayStation => Palette::Core,
         };
+        let (resolution, color_depth) = match system {
+            System::PlayStation => (Resolution::X2, ColorDepth::TrueColor),
+            System::MasterSystem | System::Genesis | System::GameBoy => {
+                (Resolution::Native, ColorDepth::Native)
+            }
+        };
         Self {
+            resolution,
+            color_depth,
             palette,
             scaler,
             ..Self::original(system)
@@ -338,6 +460,15 @@ impl ImageSettings {
             value,
             system,
         };
+        if !Resolution::available(system).contains(&self.resolution) {
+            return Err(error("resolução interna", self.resolution.id()));
+        }
+        if !ColorDepth::available(system).contains(&self.color_depth) {
+            return Err(error("cor", self.color_depth.id()));
+        }
+        if !Geometry::available(system).contains(&self.geometry) {
+            return Err(error("geometria", self.geometry.id()));
+        }
         if !Palette::available(system).contains(&self.palette) {
             return Err(error("paleta", self.palette.id()));
         }
@@ -537,6 +668,62 @@ mod tests {
             ..ImageSettings::recommended(System::MasterSystem)
         };
         assert!(composite_sms.check(System::MasterSystem).is_ok());
+    }
+
+    #[test]
+    fn core_techniques_exist_only_on_the_playstation() {
+        for resolution in Resolution::ALL {
+            assert_eq!(Resolution::from_id(resolution.id()), Some(resolution));
+        }
+        for depth in ColorDepth::ALL {
+            assert_eq!(ColorDepth::from_id(depth.id()), Some(depth));
+        }
+        for geometry in Geometry::ALL {
+            assert_eq!(Geometry::from_id(geometry.id()), Some(geometry));
+        }
+        assert_eq!(Resolution::from_id("8x"), None);
+        let ps1 = ImageSettings::recommended(System::PlayStation);
+        assert_eq!(ps1.resolution, Resolution::X2);
+        assert_eq!(ps1.color_depth, ColorDepth::TrueColor);
+        assert_eq!(ps1.geometry, Geometry::Native);
+        let all = ImageSettings {
+            resolution: Resolution::X4,
+            geometry: Geometry::Precise,
+            ..ps1
+        };
+        assert!(all.check(System::PlayStation).is_ok());
+        for system in [System::MasterSystem, System::Genesis, System::GameBoy] {
+            let original = ImageSettings::original(system);
+            assert_eq!(
+                ImageSettings::recommended(system).resolution,
+                Resolution::Native
+            );
+            for (option, wrong) in [
+                (
+                    "resolução interna",
+                    ImageSettings {
+                        resolution: Resolution::X2,
+                        ..original
+                    },
+                ),
+                (
+                    "cor",
+                    ImageSettings {
+                        color_depth: ColorDepth::TrueColor,
+                        ..original
+                    },
+                ),
+                (
+                    "geometria",
+                    ImageSettings {
+                        geometry: Geometry::Precise,
+                        ..original
+                    },
+                ),
+            ] {
+                assert_eq!(wrong.check(system).expect_err("só PS1").option, option);
+            }
+        }
     }
 
     #[test]

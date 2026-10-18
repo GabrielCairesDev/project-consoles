@@ -30,8 +30,8 @@ Referência obrigatória para a regra §13 do `CLAUDE.md`. Vale para os consoles
 | Técnica | Para que serve | Observação |
 |---------|----------------|------------|
 | Resolução interna (1×, 2×, 3×, 4×…) | 3D nítido | a de maior impacto; o custo cresce com o quadrado do fator |
-| Precisão de geometria (PGXP, PS1) | acaba com os polígonos tremendo | também corrige a perspectiva das texturas |
-| Cor de 24 bits / sem dithering (PS1) | remove a trama de 15 bits | |
+| Precisão de geometria (PGXP, PS1) | acaba com os polígonos tremendo | no app, a versão do GTE: a fração de cada vértice projetado é guardada pela palavra SXY e usada só na imagem ampliada; vértices alterados na CPU ficam como no hardware. A correção de perspectiva das texturas (PGXP completo) não é feita |
+| Cor de 24 bits / sem dithering (PS1) | remove a trama de 15 bits | a cópia da VRAM usada na imagem guarda 24 bits; texturas e CLUTs seguem em 15 bits (vêm da VRAM 1×) |
 | Filtragem de textura (bilinear, 3 pontos, xBR) | texturas sem serrilhado | |
 | Downsampling adaptativo | telas 2D voltam ao original, o 3D fica em alta | evita menus borrados ou desalinhados |
 
@@ -77,9 +77,9 @@ Proporção (original, 4:3, pixels quadrados), escala inteira ou preencher, e co
 
 | Técnica | Master System | Mega Drive | Game Boy (DMG) | PlayStation |
 |---------|---------------|------------|----------------|-------------|
-| Resolução interna | — | — | — | R (2×) |
+| Resolução interna | — | — | — | R (2×; 3× e 4× com aviso de pesada) |
 | PGXP | — | — | — | o |
-| 24 bits / sem dithering | — | — | — | o |
+| 24 bits / sem dithering | — | — | — | R |
 | Filtragem de textura | — | — | — | o |
 | Downsampling adaptativo | — | — | — | o |
 | Paleta | — | — | R (verde original) | — |
@@ -119,8 +119,24 @@ Benchmark: `cargo test --release -p player bench_ -- --ignored --nocapture` (`vi
 | Composto + MMPX + TV de tubo (pior caso) | implementada | SMS 256×192 | 3,43–3,47 |
 | Paleta + rastro + EPX + grade do LCD | implementada | GB 160×144 | 1,68–2,01 |
 | Composto + bilinear + TV de tubo | implementada | PS1 640×480, 4:3 | 2,61–2,83 |
-| Resolução interna 2× | em outro branch (`claude/gifted-gates-6ae501`) | — | — |
 | Demais | não implementadas | — | — |
+
+**Etapa 1 (núcleo, PlayStation).** Medida pelo núcleo, não pelo player: `enhancements_speed` em `crates/psx/tests/test_programs.rs` (release, Crash Bandicoot, 1200 quadros depois de 1500 de abertura, um Mac com Apple Silicon). O console precisa de 60 quadros/s (16,7 ms por quadro). O teste também confere que a VRAM 1× e os ciclos são idênticos em todos os casos.
+
+| Caso | Quadros/s | Pior quadro (ms) |
+|------|-----------|------------------|
+| 1× | 434–487 | 3,4–7,0 |
+| 1× + 24 bits + PGXP | 402–407 | 6,0–12,2 |
+| 2× | 255–258 | 11,4–17,7 |
+| 2× + 24 bits + PGXP | 294 | 8,7–8,8 |
+| 3× | 161 | 46,7 |
+| 3× + 24 bits + PGXP | 195 | 15,4 |
+| 4× | 112 | 34,8 |
+| 4× + 24 bits + PGXP | 129 | 31,4 |
+
+- 2× fica com folga e é o Recomendado. 3× e 4× têm média bem acima de 60 quadros/s, mas piores quadros acima de 16,7 ms; por isso a tela mostra o aviso de pesada nelas.
+- 24 bits e PGXP não pesam: a variação entre execuções é maior que a diferença. O PGXP achou a fração de 95% dos vértices desenhados no Crash Bandicoot.
+- Filtragem de textura e downsampling adaptativo: não implementados. Retângulos e linhas (sprites, textos e boa parte das telas 2D) já ficam na grade 1× na imagem ampliada, o que cobre a maior parte do motivo do downsampling.
 
 Histórico: antes de pintar só as barras, a janela inteira era limpa e reescrita, e a bilinear do PS1 em 640×480 custava 5,1–5,4 ms (acima do orçamento).
 
@@ -134,7 +150,7 @@ Histórico: antes de pintar só as barras, a janela inteira era limpa e reescrit
 - Saída de cada técnica em casos conhecidos (diagonal, área lisa, borda do quadro, quadro de 1 pixel).
 - Cada etapa desligada é identidade; o preset Original é idêntico ao quadro do núcleo, na apresentação de sempre do console (`ImageSettings::original(system)`).
 - Técnicas de escala 2D não inventam cores, exceto onde a técnica mistura por definição (bilinear, xBRZ, NTSC).
-- Etapa 1: o estado salvo em uma resolução carrega em outra, e o save do jogo não muda com ela.
+- Etapa 1: o estado salvo em uma resolução carrega em outra, e o save do jogo não muda com ela. A emulação (VRAM 1×, leituras e ciclos) é idêntica com e sem cada técnica de núcleo.
 - Configurações: ida e volta, migração do booleano antigo, valor inválido tratado e preferência respeitada ao abrir o jogo.
 - Benchmark reproduzível de cada técnica do player, com o resultado anotado na matriz.
 

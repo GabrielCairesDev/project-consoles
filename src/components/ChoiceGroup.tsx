@@ -1,4 +1,5 @@
 import { type KeyboardEvent, useId, useRef } from "react";
+import { TriangleAlert } from "lucide-react";
 import styles from "./ChoiceGroup.module.css";
 
 export interface Choice<T extends string> {
@@ -6,6 +7,9 @@ export interface Choice<T extends string> {
   label: string;
   /** Explica o efeito da escolha; vira a descrição acessível dela. */
   description?: string;
+  /** Aviso mostrado antes de escolher (ex.: opção pesada); também entra
+   * na descrição acessível. */
+  warning?: string;
 }
 
 interface ChoiceGroupProps<T extends string> {
@@ -78,6 +82,13 @@ export function ChoiceGroup<T extends string>({
           const checked = index === selected;
           const choiceLabelId = `${optionIdPrefix}-${index}-label`;
           const choiceDescriptionId = `${optionIdPrefix}-${index}-description`;
+          const choiceWarningId = `${optionIdPrefix}-${index}-warning`;
+          const describedBy = [
+            choice.description && choiceDescriptionId,
+            choice.warning && choiceWarningId,
+          ]
+            .filter(Boolean)
+            .join(" ");
           return (
             <button
               key={choice.value}
@@ -89,7 +100,7 @@ export function ChoiceGroup<T extends string>({
               className={styles.choice}
               aria-checked={checked}
               aria-labelledby={choiceLabelId}
-              aria-describedby={choice.description ? choiceDescriptionId : undefined}
+              aria-describedby={describedBy || undefined}
               tabIndex={index === tabStop ? 0 : -1}
               disabled={disabled}
               onClick={() => !checked && onChange(choice.value)}
@@ -103,6 +114,12 @@ export function ChoiceGroup<T extends string>({
                 {choice.description && (
                   <span id={choiceDescriptionId} className={styles.choiceDescription}>
                     {choice.description}
+                  </span>
+                )}
+                {choice.warning && (
+                  <span id={choiceWarningId} className={styles.choiceWarning}>
+                    <TriangleAlert className={styles.warningIcon} aria-hidden="true" />
+                    {choice.warning}
                   </span>
                 )}
               </span>

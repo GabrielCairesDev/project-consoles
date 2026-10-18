@@ -211,6 +211,7 @@ pub fn run(
         .as_ref()
         .map_or(FALLBACK_SAMPLE_RATE, |a| a.sample_rate);
     let mut machine = load_machine(rom_path, system, bios_path.as_deref(), sample_rate)?;
+    machine.set_core_image(image);
     let state_path = state_path.filter(|_| machine.supports_state());
     // Sem RAM com bateria não há o que gravar; com um arquivo que não
     // serve (outro tamanho), ele é preservado em vez de sobrescrito.
@@ -371,7 +372,9 @@ impl App {
             _ if event.repeat => {}
             COMPARE_KEY => {
                 if pressed {
-                    self.renderer = video::Renderer::new(self.comparison.toggle());
+                    let image = self.comparison.toggle();
+                    self.machine.set_core_image(image);
+                    self.renderer = video::Renderer::new(image);
                     if let Some(game) = &self.window {
                         game.window.set_title(&self.comparison.title(&self.title));
                         game.window.request_redraw();
@@ -849,6 +852,47 @@ mod tests {
             Machine::PlayStation { console, .. } => console.memory_card().to_vec(),
             _ => unreachable!("só PlayStation"),
         }
+    }
+
+    #[test]
+    fn core_image_reaches_the_playstation_renderer() {
+        let dir = tempfile::tempdir().expect("pasta temporária");
+        let mut machine = playstation_machine(dir.path());
+        let enhancements = |machine: &Machine| match machine {
+            Machine::PlayStation { console, .. } => console.enhancements(),
+            _ => unreachable!("só PlayStation"),
+        };
+        assert_eq!(enhancements(&machine), psx::Enhancements::default());
+        let ps1 = controls::System::PlayStation;
+        machine.set_core_image(ImageSettings::recommended(ps1));
+        assert_eq!(
+            enhancements(&machine),
+            psx::Enhancements {
+                resolution: psx::InternalResolution::X2,
+                true_color: true,
+                precise_geometry: false,
+            }
+        );
+        machine.set_core_image(ImageSettings {
+            resolution: image::Resolution::X4,
+            geometry: image::Geometry::Precise,
+            ..ImageSettings::recommended(ps1)
+        });
+        assert_eq!(
+            enhancements(&machine),
+            psx::Enhancements {
+                resolution: psx::InternalResolution::X4,
+                true_color: true,
+                precise_geometry: true,
+            }
+        );
+        machine.set_core_image(ImageSettings::original(ps1));
+        assert_eq!(enhancements(&machine), psx::Enhancements::default());
+        // Nos outros consoles a imagem é só apresentação.
+        let mut sms = sms_machine(vec![0x18, 0xFE]);
+        let before = sms.save_state();
+        sms.set_core_image(ImageSettings::recommended(controls::System::MasterSystem));
+        assert_eq!(sms.save_state(), before);
     }
 
     #[test]

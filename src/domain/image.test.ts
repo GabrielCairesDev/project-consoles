@@ -7,6 +7,9 @@ const SMS: ImageInfo = {
   screens: ["none"],
   signals: ["rgb"],
   blends: ["off"],
+  resolutions: ["1x"],
+  colorDepths: ["15-bit"],
+  geometries: ["native"],
   palettes: ["core"],
   scalers: ["nearest", "epx"],
   original: { scaler: "nearest" },
@@ -33,5 +36,22 @@ describe("presets de imagem", () => {
   it("compara técnica por técnica", () => {
     expect(sameChoices({ scaler: "epx" }, { scaler: "epx" })).toBe(true);
     expect(sameChoices({ scaler: "epx" }, { scaler: "nearest" })).toBe(false);
+  });
+
+  it("técnicas de núcleo também contam para o preset", () => {
+    const ps1: ImageInfo = {
+      ...SMS,
+      original: { resolution: "1x", colorDepth: "15-bit", scaler: "nearest" },
+      recommended: { resolution: "2x", colorDepth: "24-bit", scaler: "bilinear" },
+    };
+    expect(presetOf({ resolution: "2x", colorDepth: "24-bit", scaler: "bilinear" }, ps1)).toBe(
+      "recommended",
+    );
+    expect(presetOf({ resolution: "4x", colorDepth: "24-bit", scaler: "bilinear" }, ps1)).toBe(
+      "custom",
+    );
+    expect(
+      presetOf({ resolution: "2x", colorDepth: "24-bit", geometry: "precise", scaler: "bilinear" }, ps1),
+    ).toBe("custom");
   });
 });

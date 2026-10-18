@@ -4,6 +4,7 @@
 //! compilação, e o laço do player não precisa de despacho dinâmico.
 
 use crate::controls::{Action, System};
+use crate::image::{ColorDepth, Geometry, ImageSettings, Resolution};
 use crate::resample::Resampler;
 
 /// Maior quadro entre os consoles de cartucho (o Genesis em H40): define a
@@ -106,6 +107,24 @@ impl Machine {
             resampler: Resampler::new(psx::SAMPLE_RATE, sample_rate),
             native: Vec::new(),
         })
+    }
+
+    /// Aplica as técnicas de imagem feitas dentro do núcleo (resolução
+    /// interna, cor e geometria do PlayStation; nos outros consoles a
+    /// imagem é só apresentação). Não altera a emulação nem o estado salvo.
+    pub fn set_core_image(&mut self, image: ImageSettings) {
+        if let Self::PlayStation { console, .. } = self {
+            console.set_enhancements(psx::Enhancements {
+                resolution: match image.resolution {
+                    Resolution::Native => psx::InternalResolution::Native,
+                    Resolution::X2 => psx::InternalResolution::X2,
+                    Resolution::X3 => psx::InternalResolution::X3,
+                    Resolution::X4 => psx::InternalResolution::X4,
+                },
+                true_color: image.color_depth == ColorDepth::TrueColor,
+                precise_geometry: image.geometry == Geometry::Precise,
+            });
+        }
     }
 
     pub fn frame_rate(&self) -> f64 {

@@ -70,6 +70,22 @@
   line-height: var(--leading-normal);
 }
 
+/* Aviso antes de escolher (opção pesada): ícone e texto, não só a cor. */
+.choiceWarning {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  color: var(--color-warning);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
+.warningIcon {
+  flex: none;
+  width: 1em;
+  height: 1lh;
+}
+
 /* Uma opção por linha, com marcador de rádio e descrição. */
 .list {
   display: flex;

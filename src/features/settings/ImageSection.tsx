@@ -4,7 +4,10 @@ import { Button } from "../../components/Button";
 import { type Choice, ChoiceGroup } from "../../components/ChoiceGroup";
 import {
   type AspectRatio,
+  type ColorDepth,
   type Fit,
+  type Geometry,
+  type Resolution,
   type FrameBlend,
   type ScreenEffect,
   type Signal,
@@ -23,6 +26,45 @@ interface ImageSectionProps {
   disabled: boolean;
   onChange: (choices: ImageChoices) => void;
 }
+
+const HEAVY =
+  "Pesada: em cenas cheias pode passar do tempo de um quadro e deixar o jogo lento.";
+
+/** Resolução em que o núcleo desenha o 3D. */
+const RESOLUTION_CHOICE: Record<Resolution, Omit<Choice<Resolution>, "value">> = {
+  "1x": { label: "Original (1×)", description: "O 3D na resolução do console." },
+  "2x": {
+    label: "2×",
+    description: "Polígonos e texturas duas vezes mais nítidos, com folga no tempo de cada quadro.",
+  },
+  "3x": { label: "3×", description: "Três vezes mais nítido.", warning: HEAVY },
+  "4x": { label: "4×", description: "Quatro vezes mais nítido.", warning: HEAVY },
+};
+
+/** Cores do desenho 3D. */
+const COLOR_DEPTH_CHOICE: Record<ColorDepth, Omit<Choice<ColorDepth>, "value">> = {
+  "15-bit": {
+    label: "15 bits, com pontilhado",
+    description: "As cores do console, com a trama de pontos que disfarçava a falta de tons.",
+  },
+  "24-bit": {
+    label: "24 bits",
+    description: "Degradês lisos, sem a trama de pontos.",
+  },
+};
+
+/** Precisão dos vértices. */
+const GEOMETRY_CHOICE: Record<Geometry, Omit<Choice<Geometry>, "value">> = {
+  native: {
+    label: "Original",
+    description: "Os polígonos tremem um pouco quando se movem, como no console.",
+  },
+  precise: {
+    label: "Precisa (PGXP)",
+    description:
+      "Polígonos firmes, sem tremer; aparece a partir de 2×. Em raros jogos pode desalinhar peças.",
+  },
+};
 
 /** Nome e efeito de cada ampliação, em linguagem simples. */
 const SCALER_CHOICE: Record<Scaler, Omit<Choice<Scaler>, "value">> = {
@@ -165,6 +207,33 @@ export function ImageSection({ image, choices, disabled, onChange }: ImageSectio
         disabled={disabled}
         onChange={applyPreset}
       />
+      {image.resolutions.length > 1 && (
+        <ChoiceGroup
+          label="Resolução do 3D"
+          choices={image.resolutions.map((value) => ({ value, ...RESOLUTION_CHOICE[value] }))}
+          value={choices.resolution ?? null}
+          disabled={disabled}
+          onChange={(resolution) => onChange({ ...choices, resolution })}
+        />
+      )}
+      {image.colorDepths.length > 1 && (
+        <ChoiceGroup
+          label="Cor do 3D"
+          choices={image.colorDepths.map((value) => ({ value, ...COLOR_DEPTH_CHOICE[value] }))}
+          value={choices.colorDepth ?? null}
+          disabled={disabled}
+          onChange={(colorDepth) => onChange({ ...choices, colorDepth })}
+        />
+      )}
+      {image.geometries.length > 1 && (
+        <ChoiceGroup
+          label="Geometria"
+          choices={image.geometries.map((value) => ({ value, ...GEOMETRY_CHOICE[value] }))}
+          value={choices.geometry ?? null}
+          disabled={disabled}
+          onChange={(geometry) => onChange({ ...choices, geometry })}
+        />
+      )}
       {image.palettes.length > 1 && (
         <ChoiceGroup
           label="Paleta"

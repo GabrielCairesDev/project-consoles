@@ -23,6 +23,36 @@
 //!   protegidos.
 //!
 //! O desenho é instantâneo (sem o tempo de rasterização do chip).
+//!
+//! **Resolução interna maior** (melhoria de imagem, opcional): a VRAM 1×
+//! continua sendo a fonte de verdade — tudo é desenhado nela exatamente
+//! como acima, e é dela que vêm as leituras da CPU, as cópias, as texturas
+//! e as CLUTs. Com escala `s` > 1, cada polígono, retângulo e linha também
+//! é desenhado numa cópia `s`× maior ([`Enhanced`]), que serve só para a
+//! imagem mostrada. Nela os polígonos têm bordas e texturas com `s`× mais
+//! detalhe (vértices × `s`, gradientes por pixel ampliado); retângulos e
+//! linhas ocupam os mesmos blocos `s`×`s` do 1× (sprites ficam nítidos);
+//! transferências, preenchimentos e cópias repetem na cópia o que a VRAM 1×
+//! recebeu, bloco a bloco.
+//!
+//! A cópia guarda 24 bits por pixel. Sem **cor de 24 bits** ela só recebe
+//! cores de 15 bits (o mesmo desenho do 1×, com o pontilhado); com ela, a
+//! cor do desenho e a semitransparência ficam em 8 bits por canal e sem o
+//! pontilhado, que existia para disfarçar os 15 bits. Texturas e CLUTs
+//! continuam vindo da VRAM 1× (15 bits). A cópia também existe em 1×
+//! quando a cor de 24 bits está ligada.
+//!
+//! **Geometria precisa (PGXP, versão do GTE):** o GTE entrega a posição
+//! projetada de cada vértice com 16 bits de fração, que o hardware joga
+//! fora. A palavra que o jogo manda ao GP0 é a mesma que o GTE produziu,
+//! então ela serve de chave numa tabela pequena ([`Renderer::remember_vertices`]):
+//! na cópia ampliada o vértice usa a fração e para de tremer. Vértices que
+//! o jogo alterou na CPU não estão na tabela e ficam como no hardware; uma
+//! palavra repetida com outra fração erra menos de um pixel 1×. A correção
+//! de perspectiva das texturas não é feita.
+
+use crate::gte::Projected;
+use crate::{Enhancements, InternalResolution};
 
 pub(crate) const VRAM_WIDTH: usize = 1024;
 pub(crate) const VRAM_HEIGHT: usize = 512;
@@ -40,10 +70,18 @@ const FRAC: u32 = 12;
 /// Maior lista de linhas aceita antes do terminador.
 const MAX_POLYLINE_WORDS: usize = 4096;
 
+/// Bit da máscara na cópia melhorada (as cores ficam em `0x00RRGGBB`).
+const MASK_24: u32 = 1 << 31;
+
+/// Entradas da tabela de vértices precisos (potência de 2; ver [`slot`]).
+const PRECISE_SLOTS: usize = 4096;
+
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 struct Vertex {
     x: i32,
     y: i32,
+    /// Fração da posição (16 bits) vinda do GTE; só a cópia ampliada usa.
+    fraction: (u16, u16),
     color: [i32; 3],
     u: i32,
     v: i32,
@@ -120,6 +158,161 @@ pub(crate) struct Renderer {
     clut_cache: Box<[u16; 256]>,
     /// CLUT (15 bits) no cache e quantas cores dela foram carregadas.
     clut_tag: Option<(u32, usize)>,
+    /// Cópia melhorada da VRAM (escala > 1 ou cor de 24 bits); derivada
+    /// da VRAM 1× e do desenho, não faz parte do estado do console.
+    enhanced: Option<Enhanced>,
+    /// Vértices precisos do GTE (com a geometria precisa ligada).
+    precise: Option<Box<[Projected; PRECISE_SLOTS]>>,
+}
+
+/// Onde um primitivo é desenhado.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Target {
+    /// VRAM 1×, a do console.
+    Native,
+    /// Cópia melhorada, com a escala.
+    Enhanced(i32),
+}
+
+impl Target {
+    fn scale(self) -> i32 {
+        match self {
+            Self::Native => 1,
+            Self::Enhanced(s) => s,
+        }
+    }
+}
+
+/// VRAM só para a imagem: `scale`× maior, em `0x00RRGGBB` com a máscara no
+/// bit 31; com `true_color`, o desenho entra em 24 bits.
+#[derive(Clone)]
+pub(crate) struct Enhanced {
+    scale: usize,
+    true_color: bool,
+    pixels: Box<[u32]>,
+}
+
+/// Pixel de 15 bits em 24 (cada canal de 5 para 8 bits), com a máscara.
+pub(crate) fn expand(pixel: u16) -> u32 {
+    let channel = |c: u16| {
+        let c = u32::from(c & 0x1F);
+        (c << 3) | (c >> 2)
+    };
+    let mask = if pixel & 0x8000 != 0 { MASK_24 } else { 0 };
+    (channel(pixel) << 16) | (channel(pixel >> 5) << 8) | channel(pixel >> 10) | mask
+}
+
+/// Volta a 15 bits; exato para as cores que vieram de [`expand`].
+fn compress(pixel: u32) -> u16 {
+    let channel = |shift: u32| ((pixel >> shift) & 0x1F) as u16;
+    let mask = if pixel & MASK_24 != 0 { 0x8000 } else { 0 };
+    channel(19) | (channel(11) << 5) | (channel(3) << 10) | mask
+}
+
+/// Posição na tabela de vértices precisos (12 bits de um hash da palavra).
+fn slot(word: u32) -> usize {
+    (word.wrapping_mul(0x9E37_79B1) >> 20) as usize
+}
+
+/// Coordenada ampliada de um vértice: inteira × `s` mais a fração.
+fn subpixel(v: i32, fraction: u16, s: i32) -> i32 {
+    v * s + ((i32::from(fraction) * s + 0x8000) >> 16)
+}
+
+/// `v` dentro de `0..n`, sabendo que `v < 2n` (evita a divisão do `%`).
+fn wrap(v: usize, n: usize) -> usize {
+    if v >= n { v - n } else { v }
+}
+
+impl Enhanced {
+    /// Cópia da VRAM 1× com cada pixel repetido em `scale`×`scale`.
+    fn from_native(vram: &[u16], scale: usize, true_color: bool) -> Self {
+        let width = VRAM_WIDTH * scale;
+        let mut pixels = vec![0; width * VRAM_HEIGHT * scale].into_boxed_slice();
+        for (y, row) in pixels.chunks_exact_mut(width).enumerate() {
+            let native = &vram[(y / scale) * VRAM_WIDTH..][..VRAM_WIDTH];
+            for (out, &p) in row.chunks_exact_mut(scale).zip(native) {
+                out.fill(expand(p));
+            }
+        }
+        Self {
+            scale,
+            true_color,
+            pixels,
+        }
+    }
+
+    pub(crate) fn scale(&self) -> usize {
+        self.scale
+    }
+
+    pub(crate) fn width(&self) -> usize {
+        VRAM_WIDTH * self.scale
+    }
+
+    pub(crate) fn height(&self) -> usize {
+        VRAM_HEIGHT * self.scale
+    }
+
+    /// Linha `y` (`0..height()`) da VRAM ampliada.
+    pub(crate) fn row(&self, y: usize) -> &[u32] {
+        let width = self.width();
+        &self.pixels[y * width..][..width]
+    }
+
+    /// Pixel ampliado; `None` fora da VRAM (o desenho já vem recortado
+    /// pela área, então não acontece).
+    fn pixel_mut(&mut self, x: i32, y: i32) -> Option<&mut u32> {
+        let (x, y) = (usize::try_from(x).ok()?, usize::try_from(y).ok()?);
+        if x >= self.width() {
+            return None;
+        }
+        let i = y * self.width() + x;
+        self.pixels.get_mut(i)
+    }
+
+    /// Bloco do pixel 1× (`x`, `y`), já dentro da VRAM.
+    fn block_start(&self, x: usize, y: usize) -> usize {
+        y * self.scale * self.width() + x * self.scale
+    }
+
+    /// Repete no bloco o valor escrito no pixel 1× (`x`, `y`).
+    fn write_block(&mut self, x: usize, y: usize, value: u16) {
+        let value = expand(value);
+        let (start, width, scale) = (self.block_start(x, y), self.width(), self.scale);
+        for row in 0..scale {
+            self.pixels[start + row * width..][..scale].fill(value);
+        }
+    }
+
+    /// Copia o bloco do pixel 1× de origem para o de destino, como a VRAM
+    /// 1× fez com o pixel, preservando o detalhe ampliado.
+    fn copy_block(&mut self, src: (usize, usize), dst: (usize, usize), mask_set: bool) {
+        let mask = if mask_set { MASK_24 } else { 0 };
+        let (from, to) = (
+            self.block_start(src.0, src.1),
+            self.block_start(dst.0, dst.1),
+        );
+        let (width, scale) = (self.width(), self.scale);
+        for row in 0..scale {
+            for i in 0..scale {
+                let value = self.pixels[from + row * width + i];
+                self.pixels[to + row * width + i] = value | mask;
+            }
+        }
+    }
+
+    /// GP0 02h no retângulo 1× (`x`, `y`, `w`, `h`), com as voltas da VRAM.
+    fn fill(&mut self, (x, y, w, h): (usize, usize, usize, usize), value: u16) {
+        let value = expand(value);
+        let (width, height, scale) = (self.width(), self.height(), self.scale);
+        for dy in 0..h * scale {
+            let row = wrap(y * scale + dy, height) * width;
+            for dx in 0..w * scale {
+                self.pixels[row + wrap(x * scale + dx, width)] = value;
+            }
+        }
+    }
 }
 
 impl Default for Renderer {
@@ -147,6 +340,8 @@ impl Default for Renderer {
             irq_requested: false,
             clut_cache: Box::new([0; 256]),
             clut_tag: None,
+            enhanced: None,
+            precise: None,
         }
     }
 }
@@ -195,11 +390,67 @@ fn command_length(command: u32) -> Option<usize> {
 
 impl Renderer {
     pub(crate) fn reset(&mut self) {
+        // O reset da GPU não apaga a VRAM (nem a cópia melhorada).
         let vram = std::mem::take(&mut self.vram);
+        let enhanced = self.enhanced.take();
+        let precise = self.precise.take();
         *self = Self {
             vram,
+            enhanced,
+            precise,
             ..Self::default()
         };
+    }
+
+    /// Troca as melhorias do desenho. Refaz a cópia melhorada a partir da
+    /// VRAM 1× — também serve para ressincronizá-la depois de a VRAM mudar
+    /// por fora do desenho (estado carregado).
+    pub(crate) fn set_enhancements(&mut self, enhancements: Enhancements) {
+        let scale = enhancements.resolution.scale();
+        self.enhanced = (scale > 1 || enhancements.true_color)
+            .then(|| Enhanced::from_native(&self.vram, scale, enhancements.true_color));
+        self.precise = enhancements
+            .precise_geometry
+            .then(|| Box::new([Projected::default(); PRECISE_SLOTS]));
+    }
+
+    pub(crate) fn enhancements(&self) -> Enhancements {
+        let scale = self.enhanced.as_ref().map_or(1, Enhanced::scale);
+        Enhancements {
+            resolution: InternalResolution::from_scale(scale).unwrap_or_default(),
+            true_color: self.enhanced.as_ref().is_some_and(|e| e.true_color),
+            precise_geometry: self.precise.is_some(),
+        }
+    }
+
+    pub(crate) fn enhanced(&self) -> Option<&Enhanced> {
+        self.enhanced.as_ref()
+    }
+
+    /// Cópia melhorada, se houver, para desenhar nela também.
+    fn enhanced_target(&self) -> Option<Target> {
+        self.enhanced
+            .as_ref()
+            .map(|e| Target::Enhanced(e.scale as i32))
+    }
+
+    /// Guarda as posições precisas que o GTE acabou de projetar (só com a
+    /// geometria precisa ligada).
+    pub(crate) fn remember_vertices(&mut self, vertices: &[Projected]) {
+        if let Some(table) = &mut self.precise {
+            for v in vertices {
+                table[slot(v.word)] = *v;
+            }
+        }
+    }
+
+    /// Fração do vértice `word`, se o GTE o projetou.
+    fn fraction(&self, word: u32) -> (u16, u16) {
+        self.precise
+            .as_ref()
+            .map(|table| table[slot(word)])
+            .filter(|v| v.word == word)
+            .map_or((0, 0), |v| v.fraction)
     }
 
     pub(crate) fn reset_command_buffer(&mut self) {
@@ -243,13 +494,15 @@ impl Renderer {
         self.vram[(y % VRAM_HEIGHT) * VRAM_WIDTH + (x % VRAM_WIDTH)] = value;
     }
 
-    /// Escreve respeitando a máscara (para transferências e cópias).
-    fn write_masked(&mut self, x: usize, y: usize, value: u16) {
+    /// Escreve respeitando a máscara (para transferências e cópias);
+    /// devolve se escreveu.
+    fn write_masked(&mut self, x: usize, y: usize, value: u16) -> bool {
         if self.mask_check && self.pixel(x, y) & 0x8000 != 0 {
-            return;
+            return false;
         }
         let value = value | if self.mask_set { 0x8000 } else { 0 };
         self.set_pixel(x, y, value);
+        true
     }
 
     /// GPUREAD: pixels da transferência VRAM → CPU, dois por palavra.
@@ -276,7 +529,13 @@ impl Renderer {
                 if i < w * h {
                     let px = (x + i % w) as usize;
                     let py = (y + i / w) as usize;
-                    self.write_masked(px, py, (word >> (16 * half)) as u16);
+                    let value = (word >> (16 * half)) as u16;
+                    if self.write_masked(px, py, value)
+                        && let Some(up) = &mut self.enhanced
+                    {
+                        let value = value | if self.mask_set { 0x8000 } else { 0 };
+                        up.write_block(px % VRAM_WIDTH, py % VRAM_HEIGHT, value);
+                    }
                     i += 1;
                 }
             }
@@ -439,10 +698,12 @@ impl Renderer {
                 words[0]
             };
             let (x, y) = self.vertex(words[at]);
+            let fraction = self.fraction(words[at]);
             at += 1;
             *vertex = Vertex {
                 x,
                 y,
+                fraction,
                 color: rgb_of(color),
                 u: 0,
                 v: 0,
@@ -487,7 +748,27 @@ impl Renderer {
         }
     }
 
+    /// Desenha o triângulo na cópia melhorada (antes, para ler as texturas
+    /// como estavam antes do primitivo) e na VRAM 1×.
     fn triangle(&mut self, p: &Primitive, a: Vertex, b: Vertex, c: Vertex, gouraud: bool) {
+        if let Some(target) = self.enhanced_target() {
+            self.triangle_at(target, p, a, b, c, gouraud);
+        }
+        self.triangle_at(Target::Native, p, a, b, c, gouraud);
+    }
+
+    /// Rasteriza o triângulo com os vértices e a área de desenho
+    /// multiplicados pela escala do alvo; na cópia melhorada os vértices
+    /// usam também a fração precisa, quando houver.
+    fn triangle_at(
+        &mut self,
+        target: Target,
+        p: &Primitive,
+        a: Vertex,
+        b: Vertex,
+        c: Vertex,
+        gouraud: bool,
+    ) {
         let xs = [a.x, b.x, c.x];
         let ys = [a.y, b.y, c.y];
         let (min_x, max_x) = (xs.iter().min().copied(), xs.iter().max().copied());
@@ -499,6 +780,18 @@ impl Renderer {
         if max_x - min_x >= 1024 || max_y - min_y >= 512 {
             return;
         }
+        let s = target.scale();
+        let scaled = |v: Vertex| match target {
+            Target::Native => v,
+            Target::Enhanced(s) => Vertex {
+                x: subpixel(v.x, v.fraction.0, s),
+                y: subpixel(v.y, v.fraction.1, s),
+                ..v
+            },
+        };
+        let (a, b, c) = (scaled(a), scaled(b), scaled(c));
+        let (min_x, max_x) = (a.x.min(b.x).min(c.x), a.x.max(b.x).max(c.x));
+        let (min_y, max_y) = (a.y.min(b.y).min(c.y), a.y.max(b.y).max(c.y));
         let area = i64::from(b.x - a.x) * i64::from(c.y - a.y)
             - i64::from(b.y - a.y) * i64::from(c.x - a.x);
         if area == 0 {
@@ -563,10 +856,11 @@ impl Renderer {
             if top || left { 0 } else { -1 }
         });
 
-        let left = min_x.max(self.area_left);
-        let right = max_x.min(self.area_right);
-        let top = min_y.max(self.area_top);
-        let bottom = max_y.min(self.area_bottom);
+        // Cada pixel 1× da área vira um bloco s×s.
+        let left = min_x.max(self.area_left * s);
+        let right = max_x.min(self.area_right * s + s - 1);
+        let top = min_y.max(self.area_top * s);
+        let bottom = max_y.min(self.area_bottom * s + s - 1);
         if left > right || top > bottom {
             return;
         }
@@ -591,7 +885,7 @@ impl Renderer {
                     let rgb = color.map(|c| (c >> FRAC) as i32);
                     let texel = (u >> FRAC) as i32 & 0xFF;
                     let texel_v = (v >> FRAC) as i32 & 0xFF;
-                    self.shade(p, x, y, rgb, texel, texel_v);
+                    self.shade(p, target, (x, y), rgb, (texel, texel_v));
                 }
                 for i in 0..3 {
                     w[i] += step_x[i];
@@ -626,19 +920,92 @@ impl Renderer {
         }
     }
 
-    /// Cor final de um pixel e escrita na VRAM.
-    fn shade(&mut self, p: &Primitive, x: i32, y: i32, rgb: [i32; 3], u: i32, v: i32) {
+    /// Cor final do pixel (`x`, `y`) do alvo e escrita.
+    fn shade(
+        &mut self,
+        p: &Primitive,
+        target: Target,
+        (x, y): (i32, i32),
+        rgb: [i32; 3],
+        (u, v): (i32, i32),
+    ) {
+        match target {
+            Target::Native => {
+                if let Some((color, semi)) = self.color(p, x, y, rgb, u, v) {
+                    self.put_native(p, x, y, color, semi);
+                }
+            }
+            Target::Enhanced(s) => {
+                let true_color = self.enhanced.as_ref().is_some_and(|e| e.true_color);
+                let color = if true_color {
+                    self.true_color(p, rgb, u, v)
+                } else {
+                    // O dithering segue a grade 1× (mesmo padrão na imagem
+                    // ampliada).
+                    self.color(p, x / s, y / s, rgb, u, v)
+                        .map(|(color, semi)| (expand(color), semi))
+                };
+                if let Some((color, semi)) = color {
+                    self.put_enhanced(p, x, y, color, semi, true_color);
+                }
+            }
+        }
+    }
+
+    /// Cor de 24 bits do pixel, sem pontilhado, e se ele é semitransparente;
+    /// `None` para texel transparente. A conta é a de [`Self::color`] com 8
+    /// bits por canal.
+    fn true_color(&self, p: &Primitive, rgb: [i32; 3], u: i32, v: i32) -> Option<(u32, bool)> {
+        let to8 = |c: i32| c.clamp(0, 255) as u32;
+        Some(match &p.texture {
+            Some(t) => {
+                let texel = self.texel(t, u, v);
+                if texel == 0 {
+                    return None;
+                }
+                let full = expand(texel);
+                let color = if t.raw {
+                    full & !MASK_24
+                } else {
+                    let channel = |shift: u32, c: i32| {
+                        to8((((full >> shift) & 0xFF) as i32 * c) >> 7) << shift
+                    };
+                    channel(16, rgb[0]) | channel(8, rgb[1]) | channel(0, rgb[2])
+                };
+                (
+                    color | (full & MASK_24),
+                    p.semi_transparent && texel & 0x8000 != 0,
+                )
+            }
+            None => (
+                (to8(rgb[0]) << 16) | (to8(rgb[1]) << 8) | to8(rgb[2]),
+                p.semi_transparent,
+            ),
+        })
+    }
+
+    /// Cor de 15 bits do pixel 1× (`x`, `y`) e se ele é semitransparente;
+    /// `None` para texel transparente.
+    fn color(
+        &self,
+        p: &Primitive,
+        x: i32,
+        y: i32,
+        rgb: [i32; 3],
+        u: i32,
+        v: i32,
+    ) -> Option<(u16, bool)> {
         let dither = if p.dither {
             DITHER[(y & 3) as usize][(x & 3) as usize]
         } else {
             0
         };
         let to5 = |c: i32| ((c + dither).clamp(0, 255) >> 3) as u16;
-        let (mut color, semi) = match &p.texture {
+        Some(match &p.texture {
             Some(t) => {
                 let texel = self.texel(t, u, v);
                 if texel == 0 {
-                    return;
+                    return None;
                 }
                 let color = if t.raw {
                     texel & 0x7FFF
@@ -658,19 +1025,60 @@ impl Renderer {
                 to5(rgb[0]) | (to5(rgb[1]) << 5) | (to5(rgb[2]) << 10),
                 p.semi_transparent,
             ),
+        })
+    }
+
+    /// Escreve a cor de 24 bits no pixel (`x`, `y`) da cópia melhorada, com
+    /// a máscara e a semitransparência sobre o que já está lá. Sem
+    /// `true_color` a mistura é a de 15 bits, igual à da VRAM 1×.
+    fn put_enhanced(
+        &mut self,
+        p: &Primitive,
+        x: i32,
+        y: i32,
+        mut color: u32,
+        semi: bool,
+        true_color: bool,
+    ) {
+        let (mask_check, mask_set) = (self.mask_check, self.mask_set);
+        let Some(pixel) = self.enhanced.as_mut().and_then(|e| e.pixel_mut(x, y)) else {
+            return;
         };
+        let background = *pixel;
+        if mask_check && background & MASK_24 != 0 {
+            return;
+        }
+        if semi {
+            let mixed = if true_color {
+                blend_24(background, color, p.blend)
+            } else {
+                expand(blend(compress(background), compress(color), p.blend))
+            };
+            color = mixed | (color & MASK_24);
+        }
+        if mask_set {
+            color |= MASK_24;
+        }
+        *pixel = color;
+    }
+
+    /// Escreve a cor no pixel (`x`, `y`) da VRAM 1×, com a máscara e a
+    /// semitransparência sobre o que já está lá.
+    fn put_native(&mut self, p: &Primitive, x: i32, y: i32, mut color: u16, semi: bool) {
+        let (mask_check, mask_set) = (self.mask_check, self.mask_set);
         let (px, py) = (x as usize, y as usize);
-        let background = self.pixel(px, py);
-        if self.mask_check && background & 0x8000 != 0 {
+        let pixel = &mut self.vram[(py % VRAM_HEIGHT) * VRAM_WIDTH + (px % VRAM_WIDTH)];
+        let background = *pixel;
+        if mask_check && background & 0x8000 != 0 {
             return;
         }
         if semi {
             color = blend(background, color, p.blend) | (color & 0x8000);
         }
-        if self.mask_set {
+        if mask_set {
             color |= 0x8000;
         }
-        self.set_pixel(px, py, color);
+        *pixel = color;
     }
 
     fn lines(&mut self, words: &[u32]) {
@@ -700,6 +1108,7 @@ impl Renderer {
                     points.push(Vertex {
                         x,
                         y,
+                        fraction: (0, 0),
                         color: rgb_of(color),
                         u: 0,
                         v: 0,
@@ -757,12 +1166,23 @@ impl Renderer {
         let sc = [0, 1, 2].map(|i| color_step(b.color[i] - a.color[i]));
         let half = 1i64 << (FRAC - 1);
         let mut color = [0, 1, 2].map(|i| to_fixed(a.color[i]) + half);
+        let enhanced = self.enhanced_target();
         for _ in 0..=steps {
             let (px, py) = ((x >> 32) as i32, (y >> 32) as i32);
             if (self.area_left..=self.area_right).contains(&px)
                 && (self.area_top..=self.area_bottom).contains(&py)
             {
-                self.shade(p, px, py, color.map(|c| (c >> FRAC) as i32), 0, 0);
+                let rgb = color.map(|c| (c >> FRAC) as i32);
+                // Na cópia melhorada a linha ocupa os blocos dos pixels 1×.
+                if let Some(target) = enhanced {
+                    let s = target.scale();
+                    for y in py * s..(py + 1) * s {
+                        for x in px * s..(px + 1) * s {
+                            self.shade(p, target, (x, y), rgb, (0, 0));
+                        }
+                    }
+                }
+                self.shade(p, Target::Native, (px, py), rgb, (0, 0));
             }
             x += sx;
             y += sy;
@@ -813,17 +1233,44 @@ impl Renderer {
         if self.flip_x {
             u0 |= 1;
         }
-        let left = x0.max(self.area_left);
-        let right = (x0 + w - 1).min(self.area_right);
-        let top = y0.max(self.area_top);
-        let bottom = (y0 + h - 1).min(self.area_bottom);
+        let rect = (x0, y0, w, h, u0, v0);
+        if let Some(target) = self.enhanced_target() {
+            self.rectangle_at(target, &primitive, rect, color);
+        }
+        self.rectangle_at(Target::Native, &primitive, rect, color);
+    }
+
+    /// Retângulo (`x0`, `y0`, `w`, `h`, `u0`, `v0`) no alvo: cada pixel 1×
+    /// vira um bloco s×s com o mesmo texel.
+    fn rectangle_at(
+        &mut self,
+        target: Target,
+        p: &Primitive,
+        (x0, y0, w, h, u0, v0): (i32, i32, i32, i32, i32, i32),
+        color: [i32; 3],
+    ) {
+        let s = target.scale();
+        let (x0s, y0s) = (x0 * s, y0 * s);
+        let left = x0s.max(self.area_left * s);
+        let right = ((x0 + w) * s - 1).min(self.area_right * s + s - 1);
+        let top = y0s.max(self.area_top * s);
+        let bottom = ((y0 + h) * s - 1).min(self.area_bottom * s + s - 1);
+        if left > right {
+            return;
+        }
         for y in top..=bottom {
-            let dy = y - y0;
+            let dy = (y - y0s) / s;
             let v = if self.flip_y { v0 - dy } else { v0 + dy } & 0xFF;
+            // Coluna 1× e posição dentro do bloco, sem dividir por pixel.
+            let (mut dx, mut sub) = ((left - x0s) / s, (left - x0s) % s);
             for x in left..=right {
-                let dx = x - x0;
                 let u = if self.flip_x { u0 - dx } else { u0 + dx } & 0xFF;
-                self.shade(&primitive, x, y, color, u, v);
+                self.shade(p, target, (x, y), color, (u, v));
+                sub += 1;
+                if sub == s {
+                    sub = 0;
+                    dx += 1;
+                }
             }
         }
     }
@@ -840,6 +1287,9 @@ impl Renderer {
                 self.set_pixel((x + dx) as usize, (y + dy) as usize, color);
             }
         }
+        if let Some(up) = &mut self.enhanced {
+            up.fill((x as usize, y as usize, w as usize, h as usize), color);
+        }
     }
 
     /// GP0 80h: cópia VRAM → VRAM, pixel a pixel (com a máscara).
@@ -854,8 +1304,15 @@ impl Renderer {
         for y in 0..h {
             for x in 0..w {
                 let x = if reverse { w - 1 - x } else { x };
-                let value = self.pixel((sx + x) as usize, (sy + y) as usize);
-                self.write_masked((dx + x) as usize, (dy + y) as usize, value);
+                let (from_x, from_y) = ((sx + x) as usize, (sy + y) as usize);
+                let (to_x, to_y) = ((dx + x) as usize, (dy + y) as usize);
+                let value = self.pixel(from_x, from_y);
+                if self.write_masked(to_x, to_y, value)
+                    && let Some(up) = &mut self.enhanced
+                {
+                    let wrap_xy = |x: usize, y: usize| (x % VRAM_WIDTH, y % VRAM_HEIGHT);
+                    up.copy_block(wrap_xy(from_x, from_y), wrap_xy(to_x, to_y), self.mask_set);
+                }
             }
         }
     }
@@ -884,6 +1341,23 @@ fn blend(b: u16, f: u16, mode: u32) -> u16 {
         (v.clamp(0, 31) as u16) << shift
     };
     channel(0) | channel(5) | channel(10)
+}
+
+/// Semitransparência em 24 bits (`0x00RRGGBB`): a mesma conta de
+/// [`blend`] com 8 bits por canal.
+fn blend_24(b: u32, f: u32, mode: u32) -> u32 {
+    let channel = |shift: u32| {
+        let bc = ((b >> shift) & 0xFF) as i32;
+        let fc = ((f >> shift) & 0xFF) as i32;
+        let v = match mode {
+            0 => (bc + fc) >> 1,
+            1 => bc + fc,
+            2 => bc - fc,
+            _ => bc + (fc >> 2),
+        };
+        (v.clamp(0, 255) as u32) << shift
+    };
+    channel(0) | channel(8) | channel(16)
 }
 
 #[cfg(test)]

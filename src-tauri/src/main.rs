@@ -7,11 +7,13 @@ use std::process::ExitCode;
 
 use player::controls::{Bindings, System};
 use player::image::{
-    AspectRatio, Fit, FrameBlend, ImageSettings, Palette, Scaler, ScreenEffect, Signal,
+    AspectRatio, ColorDepth, Fit, FrameBlend, Geometry, ImageSettings, Palette, Resolution, Scaler,
+    ScreenEffect, Signal,
 };
 use project_consoles_lib::runtime::{
-    ASPECT_FLAG, BATTERY_FLAG, BIOS_FLAG, BLEND_FLAG, CONSOLE_FLAG, FIT_FLAG, KEYS_FLAG,
-    PALETTE_FLAG, PLAY_FLAG, SCALER_FLAG, SCREEN_FLAG, SIGNAL_FLAG, STATE_FLAG,
+    ASPECT_FLAG, BATTERY_FLAG, BIOS_FLAG, BLEND_FLAG, COLOR_FLAG, CONSOLE_FLAG, FIT_FLAG,
+    GEOMETRY_FLAG, KEYS_FLAG, PALETTE_FLAG, PLAY_FLAG, RESOLUTION_FLAG, SCALER_FLAG, SCREEN_FLAG,
+    SIGNAL_FLAG, STATE_FLAG,
 };
 
 /// O mesmo binário é o launcher e, com
@@ -77,6 +79,9 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
     let mut screen = None;
     let mut signal = None;
     let mut blend = None;
+    let mut resolution = None;
+    let mut color_depth = None;
+    let mut geometry = None;
     while let Some(flag) = args.next() {
         let value = args
             .next()
@@ -121,6 +126,20 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
             let id = value.to_str().unwrap_or_default();
             blend =
                 Some(FrameBlend::from_id(id).ok_or_else(|| format!("rastro desconhecido: {id}"))?);
+        } else if flag == RESOLUTION_FLAG {
+            let id = value.to_str().unwrap_or_default();
+            resolution = Some(
+                Resolution::from_id(id)
+                    .ok_or_else(|| format!("resolução interna desconhecida: {id}"))?,
+            );
+        } else if flag == COLOR_FLAG {
+            let id = value.to_str().unwrap_or_default();
+            color_depth =
+                Some(ColorDepth::from_id(id).ok_or_else(|| format!("cor desconhecida: {id}"))?);
+        } else if flag == GEOMETRY_FLAG {
+            let id = value.to_str().unwrap_or_default();
+            geometry =
+                Some(Geometry::from_id(id).ok_or_else(|| format!("geometria desconhecida: {id}"))?);
         } else {
             return Err(format!(
                 "argumento desconhecido: {}",
@@ -141,6 +160,9 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
         image: {
             let recommended = ImageSettings::recommended(system);
             ImageSettings {
+                resolution: resolution.unwrap_or(recommended.resolution),
+                color_depth: color_depth.unwrap_or(recommended.color_depth),
+                geometry: geometry.unwrap_or(recommended.geometry),
                 palette: palette.unwrap_or(recommended.palette),
                 scaler: scaler.unwrap_or(recommended.scaler),
                 aspect: aspect.unwrap_or(recommended.aspect),
@@ -155,7 +177,7 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
 
 fn usage() -> ExitCode {
     eprintln!(
-        "uso: {PLAY_FLAG} <caminho da ROM> {CONSOLE_FLAG} <id> [{KEYS_FLAG} <ação=tecla,...>] [{STATE_FLAG} <arquivo>] [{BATTERY_FLAG} <arquivo>] [{BIOS_FLAG} <arquivo>] [{SCALER_FLAG} <id>] [{PALETTE_FLAG} <id>] [{ASPECT_FLAG} <id>] [{FIT_FLAG} <id>] [{SCREEN_FLAG} <id>] [{SIGNAL_FLAG} <id>] [{BLEND_FLAG} <id>]"
+        "uso: {PLAY_FLAG} <caminho da ROM> {CONSOLE_FLAG} <id> [{KEYS_FLAG} <ação=tecla,...>] [{STATE_FLAG} <arquivo>] [{BATTERY_FLAG} <arquivo>] [{BIOS_FLAG} <arquivo>] [{SCALER_FLAG} <id>] [{PALETTE_FLAG} <id>] [{ASPECT_FLAG} <id>] [{FIT_FLAG} <id>] [{SCREEN_FLAG} <id>] [{SIGNAL_FLAG} <id>] [{BLEND_FLAG} <id>] [{RESOLUTION_FLAG} <id>] [{COLOR_FLAG} <id>] [{GEOMETRY_FLAG} <id>]"
     );
     ExitCode::from(2)
 }
@@ -214,6 +236,26 @@ mod tests {
             (ScreenEffect::LcdGrid, FrameBlend::On, Signal::Rgb)
         );
         assert!(parse(&[CONSOLE_FLAG, "game-boy", SCREEN_FLAG, "vhs"]).is_err());
+        let sharp_3d = [
+            CONSOLE_FLAG,
+            "playstation",
+            RESOLUTION_FLAG,
+            "4x",
+            COLOR_FLAG,
+            "15-bit",
+            GEOMETRY_FLAG,
+            "precise",
+        ];
+        let image = parse(&sharp_3d).expect("válido").image;
+        assert_eq!(
+            (image.resolution, image.color_depth, image.geometry),
+            (Resolution::X4, ColorDepth::Native, Geometry::Precise)
+        );
+        let default_ps1 = parse(&[CONSOLE_FLAG, "playstation"]).expect("válido").image;
+        assert_eq!(default_ps1.resolution, Resolution::X2, "recomendada");
+        assert!(parse(&[CONSOLE_FLAG, "playstation", RESOLUTION_FLAG, "8x"]).is_err());
+        assert!(parse(&[CONSOLE_FLAG, "playstation", COLOR_FLAG, "32-bit"]).is_err());
+        assert!(parse(&[CONSOLE_FLAG, "playstation", GEOMETRY_FLAG, "pgxp"]).is_err());
         assert!(parse(&[CONSOLE_FLAG, "game-boy", SCALER_FLAG, "talvez"]).is_err());
         let pocket = [CONSOLE_FLAG, "game-boy", PALETTE_FLAG, "pocket"];
         assert_eq!(
