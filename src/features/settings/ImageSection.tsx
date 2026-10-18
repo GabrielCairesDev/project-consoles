@@ -8,6 +8,7 @@ import {
   type Fit,
   type Geometry,
   type Resolution,
+  type TextureFilter,
   type FrameBlend,
   type ScreenEffect,
   type Signal,
@@ -63,6 +64,18 @@ const GEOMETRY_CHOICE: Record<Geometry, Omit<Choice<Geometry>, "value">> = {
     label: "Precisa (PGXP)",
     description:
       "Polígonos firmes, sem tremer; aparece a partir de 2×. Em raros jogos pode desalinhar peças.",
+  },
+};
+
+/** Filtragem das texturas 3D. */
+const TEXTURE_CHOICE: Record<TextureFilter, Omit<Choice<TextureFilter>, "value">> = {
+  nearest: {
+    label: "Original",
+    description: "Texturas pixeladas quando vistas de perto, como no console.",
+  },
+  bilinear: {
+    label: "Suavizada",
+    description: "Mistura os pontos vizinhos da textura, sem serrilhado de perto. Sprites e textos continuam nítidos.",
   },
 };
 
@@ -232,6 +245,15 @@ export function ImageSection({ image, choices, disabled, onChange }: ImageSectio
           value={choices.geometry ?? null}
           disabled={disabled}
           onChange={(geometry) => onChange({ ...choices, geometry })}
+        />
+      )}
+      {image.textures.length > 1 && (
+        <ChoiceGroup
+          label="Textura do 3D"
+          choices={image.textures.map((value) => ({ value, ...TEXTURE_CHOICE[value] }))}
+          value={choices.texture ?? null}
+          disabled={disabled}
+          onChange={(texture) => onChange({ ...choices, texture })}
         />
       )}
       {image.palettes.length > 1 && (

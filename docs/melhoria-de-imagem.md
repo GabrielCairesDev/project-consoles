@@ -32,7 +32,7 @@ Referência obrigatória para a regra §13 do `CLAUDE.md`. Vale para os consoles
 | Resolução interna (1×, 2×, 3×, 4×…) | 3D nítido | a de maior impacto; o custo cresce com o quadrado do fator |
 | Precisão de geometria (PGXP, PS1) | acaba com os polígonos tremendo | no app, a versão do GTE: a fração de cada vértice projetado é guardada pela palavra SXY e usada só na imagem ampliada; vértices alterados na CPU ficam como no hardware. A correção de perspectiva das texturas (PGXP completo) não é feita |
 | Cor de 24 bits / sem dithering (PS1) | remove a trama de 15 bits | a cópia da VRAM usada na imagem guarda 24 bits; texturas e CLUTs seguem em 15 bits (vêm da VRAM 1×) |
-| Filtragem de textura (bilinear, 3 pontos, xBR) | texturas sem serrilhado | |
+| Filtragem de textura (bilinear, 3 pontos, xBR) | texturas sem serrilhado | no app, bilinear na imagem melhorada, só em polígonos; texels transparentes ficam fora da mistura (sem halo nas bordas recortadas) e sprites/textos (retângulos) seguem nítidos |
 | Downsampling adaptativo | telas 2D voltam ao original, o 3D fica em alta | evita menus borrados ou desalinhados |
 
 ### Etapa 2 — Cor
@@ -126,17 +126,22 @@ Benchmark: `cargo test --release -p player bench_ -- --ignored --nocapture` (`vi
 | Caso | Quadros/s | Pior quadro (ms) |
 |------|-----------|------------------|
 | 1× | 434–487 | 3,4–7,0 |
-| 1× + 24 bits + PGXP | 402–407 | 6,0–12,2 |
-| 2× | 255–258 | 11,4–17,7 |
-| 2× + 24 bits + PGXP | 294 | 8,7–8,8 |
-| 3× | 161 | 46,7 |
-| 3× + 24 bits + PGXP | 195 | 15,4 |
-| 4× | 112 | 34,8 |
-| 4× + 24 bits + PGXP | 129 | 31,4 |
+| 1× + 24 bits + PGXP | 395–410 | 5,1–12,2 |
+| 1× + 24 bits + PGXP + filtragem | 400–408 | 5,1–5,2 |
+| 2× | 254–260 | 11,4–17,7 |
+| 2× + 24 bits + PGXP | 289–294 | 8,7–9,4 |
+| 2× + 24 bits + PGXP + filtragem | 284–287 | 9,6–10,0 |
+| 3× | 161–166 | 22,2–51,5 |
+| 3× + 24 bits + PGXP | 195–196 | 15,4–16,5 |
+| 3× + 24 bits + PGXP + filtragem | 191–193 | 17,2–19,4 |
+| 4× | 111–112 | 34,8–36,4 |
+| 4× + 24 bits + PGXP | 129–135 | 26,4–31,4 |
+| 4× + 24 bits + PGXP + filtragem | 132 | 27,8 |
 
 - 2× fica com folga e é o Recomendado. 3× e 4× têm média bem acima de 60 quadros/s, mas piores quadros acima de 16,7 ms; por isso a tela mostra o aviso de pesada nelas.
 - 24 bits e PGXP não pesam: a variação entre execuções é maior que a diferença. O PGXP achou a fração de 95% dos vértices desenhados no Crash Bandicoot.
-- Filtragem de textura e downsampling adaptativo: não implementados. Retângulos e linhas (sprites, textos e boa parte das telas 2D) já ficam na grade 1× na imagem ampliada, o que cobre a maior parte do motivo do downsampling.
+- A filtragem de textura custa 1–2% dos quadros/s. Fica fora do Recomendado por mudar o visual pensado para texturas pixeladas (gosto, não correção).
+- Downsampling adaptativo: não implementado. Retângulos e linhas (sprites, textos e boa parte das telas 2D) já ficam na grade 1× na imagem ampliada, o que cobre a maior parte do motivo dele.
 
 Histórico: antes de pintar só as barras, a janela inteira era limpa e reescrita, e a bilinear do PS1 em 640×480 custava 5,1–5,4 ms (acima do orçamento).
 

@@ -8,12 +8,12 @@ use std::process::ExitCode;
 use player::controls::{Bindings, System};
 use player::image::{
     AspectRatio, ColorDepth, Fit, FrameBlend, Geometry, ImageSettings, Palette, Resolution, Scaler,
-    ScreenEffect, Signal,
+    ScreenEffect, Signal, TextureFilter,
 };
 use project_consoles_lib::runtime::{
     ASPECT_FLAG, BATTERY_FLAG, BIOS_FLAG, BLEND_FLAG, COLOR_FLAG, CONSOLE_FLAG, FIT_FLAG,
     GEOMETRY_FLAG, KEYS_FLAG, PALETTE_FLAG, PLAY_FLAG, RESOLUTION_FLAG, SCALER_FLAG, SCREEN_FLAG,
-    SIGNAL_FLAG, STATE_FLAG,
+    SIGNAL_FLAG, STATE_FLAG, TEXTURE_FLAG,
 };
 
 /// O mesmo binário é o launcher e, com
@@ -82,6 +82,7 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
     let mut resolution = None;
     let mut color_depth = None;
     let mut geometry = None;
+    let mut texture = None;
     while let Some(flag) = args.next() {
         let value = args
             .next()
@@ -140,6 +141,11 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
             let id = value.to_str().unwrap_or_default();
             geometry =
                 Some(Geometry::from_id(id).ok_or_else(|| format!("geometria desconhecida: {id}"))?);
+        } else if flag == TEXTURE_FLAG {
+            let id = value.to_str().unwrap_or_default();
+            texture = Some(
+                TextureFilter::from_id(id).ok_or_else(|| format!("textura desconhecida: {id}"))?,
+            );
         } else {
             return Err(format!(
                 "argumento desconhecido: {}",
@@ -163,6 +169,7 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
                 resolution: resolution.unwrap_or(recommended.resolution),
                 color_depth: color_depth.unwrap_or(recommended.color_depth),
                 geometry: geometry.unwrap_or(recommended.geometry),
+                texture: texture.unwrap_or(recommended.texture),
                 palette: palette.unwrap_or(recommended.palette),
                 scaler: scaler.unwrap_or(recommended.scaler),
                 aspect: aspect.unwrap_or(recommended.aspect),
@@ -177,7 +184,7 @@ fn parse_options(mut args: impl Iterator<Item = OsString>) -> Result<PlayOptions
 
 fn usage() -> ExitCode {
     eprintln!(
-        "uso: {PLAY_FLAG} <caminho da ROM> {CONSOLE_FLAG} <id> [{KEYS_FLAG} <ação=tecla,...>] [{STATE_FLAG} <arquivo>] [{BATTERY_FLAG} <arquivo>] [{BIOS_FLAG} <arquivo>] [{SCALER_FLAG} <id>] [{PALETTE_FLAG} <id>] [{ASPECT_FLAG} <id>] [{FIT_FLAG} <id>] [{SCREEN_FLAG} <id>] [{SIGNAL_FLAG} <id>] [{BLEND_FLAG} <id>] [{RESOLUTION_FLAG} <id>] [{COLOR_FLAG} <id>] [{GEOMETRY_FLAG} <id>]"
+        "uso: {PLAY_FLAG} <caminho da ROM> {CONSOLE_FLAG} <id> [{KEYS_FLAG} <ação=tecla,...>] [{STATE_FLAG} <arquivo>] [{BATTERY_FLAG} <arquivo>] [{BIOS_FLAG} <arquivo>] [{SCALER_FLAG} <id>] [{PALETTE_FLAG} <id>] [{ASPECT_FLAG} <id>] [{FIT_FLAG} <id>] [{SCREEN_FLAG} <id>] [{SIGNAL_FLAG} <id>] [{BLEND_FLAG} <id>] [{RESOLUTION_FLAG} <id>] [{COLOR_FLAG} <id>] [{GEOMETRY_FLAG} <id>] [{TEXTURE_FLAG} <id>]"
     );
     ExitCode::from(2)
 }
@@ -245,12 +252,16 @@ mod tests {
             "15-bit",
             GEOMETRY_FLAG,
             "precise",
+            TEXTURE_FLAG,
+            "bilinear",
         ];
         let image = parse(&sharp_3d).expect("válido").image;
         assert_eq!(
             (image.resolution, image.color_depth, image.geometry),
             (Resolution::X4, ColorDepth::Native, Geometry::Precise)
         );
+        assert_eq!(image.texture, TextureFilter::Bilinear);
+        assert!(parse(&[CONSOLE_FLAG, "playstation", TEXTURE_FLAG, "xbr"]).is_err());
         let default_ps1 = parse(&[CONSOLE_FLAG, "playstation"]).expect("válido").image;
         assert_eq!(default_ps1.resolution, Resolution::X2, "recomendada");
         assert!(parse(&[CONSOLE_FLAG, "playstation", RESOLUTION_FLAG, "8x"]).is_err());

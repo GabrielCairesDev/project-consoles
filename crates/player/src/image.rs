@@ -5,7 +5,8 @@
 //! Original e Recomendado só preenchem os campos; o preset atual é
 //! deduzido comparando com eles, nunca guardado à parte.
 //!
-//! As técnicas de núcleo ([`Resolution`], [`ColorDepth`], [`Geometry`])
+//! As técnicas de núcleo ([`Resolution`], [`ColorDepth`], [`Geometry`],
+//! [`TextureFilter`])
 //! mudam o desenho dentro do núcleo do console; as outras são etapas do
 //! player. Nenhuma muda a emulação.
 
@@ -380,12 +381,44 @@ impl Geometry {
     }
 }
 
+/// Filtragem das texturas 3D (etapa de núcleo, PlayStation).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextureFilter {
+    /// Texel mais próximo, como o console (texturas pixeladas de perto).
+    Nearest,
+    /// Mistura dos 4 texels vizinhos; sprites e textos ficam nítidos.
+    Bilinear,
+}
+
+impl TextureFilter {
+    pub const ALL: [Self; 2] = [Self::Nearest, Self::Bilinear];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Nearest => "nearest",
+            Self::Bilinear => "bilinear",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|filter| filter.id() == id)
+    }
+
+    pub fn available(system: System) -> &'static [Self] {
+        match system {
+            System::PlayStation => &Self::ALL,
+            System::MasterSystem | System::Genesis | System::GameBoy => &[Self::Nearest],
+        }
+    }
+}
+
 /// Configuração de imagem de um console: uma escolha por técnica.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageSettings {
     pub resolution: Resolution,
     pub color_depth: ColorDepth,
     pub geometry: Geometry,
+    pub texture: TextureFilter,
     pub palette: Palette,
     pub scaler: Scaler,
     pub aspect: AspectRatio,
@@ -410,6 +443,7 @@ impl ImageSettings {
             resolution: Resolution::Native,
             color_depth: ColorDepth::Native,
             geometry: Geometry::Native,
+            texture: TextureFilter::Nearest,
             palette: Palette::Core,
             scaler: Scaler::Nearest,
             aspect,
@@ -426,7 +460,8 @@ impl ImageSettings {
     /// maior resolução que cabe no tempo de um quadro em cenas cheias) e em
     /// 24 bits, sem o pontilhado que só disfarçava os 15 bits. A geometria
     /// precisa fica de fora: em jogos que mexem nos vértices fora do GTE ela
-    /// pode desalinhar peças. A apresentação é a do Original, e os efeitos de
+    /// pode desalinhar peças. A filtragem de textura também: muda o visual
+    /// pensado para texturas pixeladas, então é gosto, não correção. A apresentação é a do Original, e os efeitos de
     /// tela, sinal e rastro ficam desligados (são escolha do usuário, não
     /// correção).
     pub fn recommended(system: System) -> Self {
@@ -468,6 +503,9 @@ impl ImageSettings {
         }
         if !Geometry::available(system).contains(&self.geometry) {
             return Err(error("geometria", self.geometry.id()));
+        }
+        if !TextureFilter::available(system).contains(&self.texture) {
+            return Err(error("textura", self.texture.id()));
         }
         if !Palette::available(system).contains(&self.palette) {
             return Err(error("paleta", self.palette.id()));
@@ -681,14 +719,19 @@ mod tests {
         for geometry in Geometry::ALL {
             assert_eq!(Geometry::from_id(geometry.id()), Some(geometry));
         }
+        for filter in TextureFilter::ALL {
+            assert_eq!(TextureFilter::from_id(filter.id()), Some(filter));
+        }
         assert_eq!(Resolution::from_id("8x"), None);
         let ps1 = ImageSettings::recommended(System::PlayStation);
         assert_eq!(ps1.resolution, Resolution::X2);
         assert_eq!(ps1.color_depth, ColorDepth::TrueColor);
         assert_eq!(ps1.geometry, Geometry::Native);
+        assert_eq!(ps1.texture, TextureFilter::Nearest);
         let all = ImageSettings {
             resolution: Resolution::X4,
             geometry: Geometry::Precise,
+            texture: TextureFilter::Bilinear,
             ..ps1
         };
         assert!(all.check(System::PlayStation).is_ok());
@@ -717,6 +760,13 @@ mod tests {
                     "geometria",
                     ImageSettings {
                         geometry: Geometry::Precise,
+                        ..original
+                    },
+                ),
+                (
+                    "textura",
+                    ImageSettings {
+                        texture: TextureFilter::Bilinear,
                         ..original
                     },
                 ),

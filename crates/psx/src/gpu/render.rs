@@ -50,6 +50,13 @@
 //! o jogo alterou na CPU não estão na tabela e ficam como no hardware; uma
 //! palavra repetida com outra fração erra menos de um pixel 1×. A correção
 //! de perspectiva das texturas não é feita.
+//!
+//! **Filtragem de textura** (só na cópia melhorada, só em polígonos): cada
+//! pixel mistura os 4 texels vizinhos pela posição fracionária da textura
+//! (bilinear). Texels transparentes não entram na mistura; o pixel some se
+//! eles pesarem mais da metade, então bordas recortadas não escurecem nem
+//! ganham halo. Retângulos (sprites, textos) não são filtrados e continuam
+//! nítidos.
 
 use crate::gte::Projected;
 use crate::{Enhancements, InternalResolution};
@@ -189,6 +196,7 @@ impl Target {
 pub(crate) struct Enhanced {
     scale: usize,
     true_color: bool,
+    texture_filtering: bool,
     pixels: Box<[u32]>,
 }
 
@@ -226,7 +234,8 @@ fn wrap(v: usize, n: usize) -> usize {
 
 impl Enhanced {
     /// Cópia da VRAM 1× com cada pixel repetido em `scale`×`scale`.
-    fn from_native(vram: &[u16], scale: usize, true_color: bool) -> Self {
+    fn from_native(vram: &[u16], enhancements: Enhancements) -> Self {
+        let scale = enhancements.resolution.scale();
         let width = VRAM_WIDTH * scale;
         let mut pixels = vec![0; width * VRAM_HEIGHT * scale].into_boxed_slice();
         for (y, row) in pixels.chunks_exact_mut(width).enumerate() {
@@ -237,7 +246,8 @@ impl Enhanced {
         }
         Self {
             scale,
-            true_color,
+            true_color: enhancements.true_color,
+            texture_filtering: enhancements.texture_filtering,
             pixels,
         }
     }
@@ -407,8 +417,8 @@ impl Renderer {
     /// por fora do desenho (estado carregado).
     pub(crate) fn set_enhancements(&mut self, enhancements: Enhancements) {
         let scale = enhancements.resolution.scale();
-        self.enhanced = (scale > 1 || enhancements.true_color)
-            .then(|| Enhanced::from_native(&self.vram, scale, enhancements.true_color));
+        self.enhanced = (scale > 1 || enhancements.true_color || enhancements.texture_filtering)
+            .then(|| Enhanced::from_native(&self.vram, enhancements));
         self.precise = enhancements
             .precise_geometry
             .then(|| Box::new([Projected::default(); PRECISE_SLOTS]));
@@ -420,6 +430,7 @@ impl Renderer {
             resolution: InternalResolution::from_scale(scale).unwrap_or_default(),
             true_color: self.enhanced.as_ref().is_some_and(|e| e.true_color),
             precise_geometry: self.precise.is_some(),
+            texture_filtering: self.enhanced.as_ref().is_some_and(|e| e.texture_filtering),
         }
     }
 
@@ -875,6 +886,13 @@ impl Renderer {
                 + half
         };
 
+        // Filtrado, o texel sai da posição fracionária (sem o meio de
+        // arredondamento que escolhe o texel mais próximo).
+        let filtered = p.texture.is_some()
+            && match target {
+                Target::Native => false,
+                Target::Enhanced(_) => self.enhanced.as_ref().is_some_and(|e| e.texture_filtering),
+            };
         for y in top..=bottom {
             let mut w = [0, 1, 2].map(|i| edge_value(edges[i], left, y) + bias[i]);
             let mut color = [0, 1, 2].map(|i| at(core.color[i], shade[i], left, y));
@@ -883,9 +901,13 @@ impl Renderer {
             for x in left..=right {
                 if w[0] >= 0 && w[1] >= 0 && w[2] >= 0 {
                     let rgb = color.map(|c| (c >> FRAC) as i32);
-                    let texel = (u >> FRAC) as i32 & 0xFF;
-                    let texel_v = (v >> FRAC) as i32 & 0xFF;
-                    self.shade(p, target, (x, y), rgb, (texel, texel_v));
+                    if filtered {
+                        self.shade_filtered(p, s, (x, y), rgb, (u - half, v - half));
+                    } else {
+                        let texel = (u >> FRAC) as i32 & 0xFF;
+                        let texel_v = (v >> FRAC) as i32 & 0xFF;
+                        self.shade(p, target, (x, y), rgb, (texel, texel_v));
+                    }
                 }
                 for i in 0..3 {
                     w[i] += step_x[i];
@@ -950,6 +972,83 @@ impl Renderer {
                 }
             }
         }
+    }
+
+    /// Pixel (`x`, `y`) da cópia melhorada com a textura filtrada;
+    /// (`u`, `v`) em ponto fixo (`FRAC` bits de fração).
+    fn shade_filtered(
+        &mut self,
+        p: &Primitive,
+        s: i32,
+        (x, y): (i32, i32),
+        rgb: [i32; 3],
+        (u, v): (i64, i64),
+    ) {
+        let Some(t) = p.texture else {
+            return;
+        };
+        let Some((texel, bit15)) = self.filtered_texel(&t, u, v) else {
+            return;
+        };
+        let true_color = self.enhanced.as_ref().is_some_and(|e| e.true_color);
+        let channel = |shift: u32| ((texel >> shift) & 0xFF) as i32;
+        let modulated = |shift: u32, c: i32| {
+            if t.raw {
+                channel(shift)
+            } else {
+                (channel(shift) * c) >> 7
+            }
+        };
+        let dither = if p.dither && !true_color {
+            DITHER[((y / s) & 3) as usize][((x / s) & 3) as usize]
+        } else {
+            0
+        };
+        let finish = |shift: u32, c: i32| {
+            let c = (modulated(shift, c) + dither).clamp(0, 255) as u32;
+            // Sem cor de 24 bits, volta aos 5 bits do console.
+            let c = if true_color { c } else { (c & 0xF8) | (c >> 5) };
+            c << shift
+        };
+        let mask = if bit15 { MASK_24 } else { 0 };
+        let color = finish(16, rgb[0]) | finish(8, rgb[1]) | finish(0, rgb[2]) | mask;
+        self.put_enhanced(p, x, y, color, p.semi_transparent && bit15, true_color);
+    }
+
+    /// Mistura bilinear dos 4 texels em volta de (`u`, `v`) (ponto fixo):
+    /// cor em `0x00RRGGBB` e o bit 15 do texel de maior peso. Transparentes
+    /// ficam de fora; `None` se pesam mais da metade.
+    fn filtered_texel(&self, t: &Texture, u: i64, v: i64) -> Option<(u32, bool)> {
+        let (u0, v0) = ((u >> FRAC) as i32, (v >> FRAC) as i32);
+        let fraction = |c: i64| ((c >> (FRAC - 8)) & 0xFF) as u32;
+        let (fu, fv) = (fraction(u), fraction(v));
+        let samples = [
+            (u0, v0, (256 - fu) * (256 - fv)),
+            (u0 + 1, v0, fu * (256 - fv)),
+            (u0, v0 + 1, (256 - fu) * fv),
+            (u0 + 1, v0 + 1, fu * fv),
+        ];
+        let (mut sum, mut opaque, mut heaviest) = ([0u32; 3], 0, (0, 0u16));
+        for (su, sv, weight) in samples {
+            let texel = self.texel(t, su & 0xFF, sv & 0xFF);
+            if texel == 0 || weight == 0 {
+                continue;
+            }
+            let color = expand(texel);
+            for (i, shift) in [16, 8, 0].into_iter().enumerate() {
+                sum[i] += ((color >> shift) & 0xFF) * weight;
+            }
+            opaque += weight;
+            if weight > heaviest.0 {
+                heaviest = (weight, texel);
+            }
+        }
+        // Os pesos somam 256².
+        if opaque * 2 <= 256 * 256 {
+            return None;
+        }
+        let [r, g, b] = sum.map(|c| (c + opaque / 2) / opaque);
+        Some(((r << 16) | (g << 8) | b, heaviest.1 & 0x8000 != 0))
     }
 
     /// Cor de 24 bits do pixel, sem pontilhado, e se ele é semitransparente;

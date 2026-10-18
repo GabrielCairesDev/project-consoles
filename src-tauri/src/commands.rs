@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use player::controls::{Bindings, SUPPORTED_KEYS, System};
 use player::image::{
     AspectRatio, ColorDepth, Fit, FrameBlend, Geometry, ImageSettings, Palette, Resolution, Scaler,
-    ScreenEffect, Signal,
+    ScreenEffect, Signal, TextureFilter,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
@@ -105,6 +105,8 @@ pub struct ImageInfo {
     color_depths: Vec<&'static str>,
     /// Precisões de geometria ([`Geometry::id`]).
     geometries: Vec<&'static str>,
+    /// Filtragens de textura ([`TextureFilter::id`]).
+    textures: Vec<&'static str>,
     /// Ampliações do console ([`Scaler::id`]), na ordem de exibição.
     scalers: Vec<&'static str>,
     /// Proporções do console ([`AspectRatio::id`]).
@@ -135,6 +137,10 @@ impl ImageInfo {
                 .map(|c| c.id())
                 .collect(),
             geometries: Geometry::available(system).iter().map(|g| g.id()).collect(),
+            textures: TextureFilter::available(system)
+                .iter()
+                .map(|t| t.id())
+                .collect(),
             scalers: Scaler::available(system).iter().map(|s| s.id()).collect(),
             aspects: AspectRatio::available(system)
                 .iter()
@@ -920,6 +926,9 @@ mod tests {
         assert_eq!(ps1_image.resolutions, ["1x", "2x", "3x", "4x"]);
         assert_eq!(ps1_image.color_depths, ["15-bit", "24-bit"]);
         assert_eq!(ps1_image.geometries, ["native", "precise"]);
+        assert_eq!(ps1_image.textures, ["nearest", "bilinear"]);
+        assert_eq!(ps1_image.recommended.texture.as_deref(), Some("nearest"));
+        assert_eq!(gb_image.textures, ["nearest"]);
         assert_eq!(ps1_image.recommended.resolution.as_deref(), Some("2x"));
         assert_eq!(ps1_image.recommended.color_depth.as_deref(), Some("24-bit"));
         assert_eq!(ps1_image.original.resolution.as_deref(), Some("1x"));

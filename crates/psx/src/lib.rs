@@ -168,6 +168,8 @@ pub struct Enhancements {
     /// Vértices com a fração que o GTE calculou (PGXP), sem o tremor dos
     /// polígonos; aparece a partir de 2×.
     pub precise_geometry: bool,
+    /// Texturas dos polígonos filtradas (bilinear), sem serrilhado de perto.
+    pub texture_filtering: bool,
 }
 
 /// Confere se `bytes` tem o tamanho de um BIOS do PlayStation.

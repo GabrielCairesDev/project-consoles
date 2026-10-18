@@ -10,6 +10,7 @@ const SMS: ImageInfo = {
   resolutions: ["1x"],
   colorDepths: ["15-bit"],
   geometries: ["native"],
+  textures: ["nearest"],
   palettes: ["core"],
   scalers: ["nearest", "epx"],
   original: { scaler: "nearest" },

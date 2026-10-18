@@ -31,7 +31,7 @@ const SMS: Console = {
   playable: true,
   needsBios: false,
   resumable: true,
-  image: { aspects: ["square"], fits: ["integer"], screens: ["none"], signals: ["rgb"], blends: ["off"], resolutions: ["1x"], colorDepths: ["15-bit"], geometries: ["native"], palettes: ["core"], scalers: ["nearest", "epx"], original: { scaler: "nearest" }, recommended: { scaler: "epx" } },
+  image: { aspects: ["square"], fits: ["integer"], screens: ["none"], signals: ["rgb"], blends: ["off"], resolutions: ["1x"], colorDepths: ["15-bit"], geometries: ["native"], textures: ["nearest"], palettes: ["core"], scalers: ["nearest", "epx"], original: { scaler: "nearest" }, recommended: { scaler: "epx" } },
 };
 
 const PS1: Console = {
@@ -42,7 +42,7 @@ const PS1: Console = {
   releaseYear: 1994,
   needsBios: true,
   resumable: false,
-  image: { aspects: ["square"], fits: ["integer"], screens: ["none"], signals: ["rgb"], blends: ["off"], resolutions: ["1x"], colorDepths: ["15-bit"], geometries: ["native"], palettes: ["core"], scalers: ["nearest", "bilinear"], original: { scaler: "nearest" }, recommended: { scaler: "bilinear" } },
+  image: { aspects: ["square"], fits: ["integer"], screens: ["none"], signals: ["rgb"], blends: ["off"], resolutions: ["1x"], colorDepths: ["15-bit"], geometries: ["native"], textures: ["nearest"], palettes: ["core"], scalers: ["nearest", "bilinear"], original: { scaler: "nearest" }, recommended: { scaler: "bilinear" } },
 };
 
 function Harness({
@@ -289,6 +289,7 @@ describe("SettingsDialog", () => {
         resolutions: ["1x", "2x", "3x", "4x"],
         colorDepths: ["15-bit", "24-bit"],
         geometries: ["native", "precise"],
+        textures: ["nearest", "bilinear"],
         palettes: ["core"],
         scalers: ["nearest", "bilinear", "sharp-bilinear"],
         original: { resolution: "1x", colorDepth: "15-bit", geometry: "native", scaler: "nearest" },
@@ -318,6 +319,16 @@ describe("SettingsDialog", () => {
     expect(
       within(screen.getByRole("radiogroup", { name: "Cor do 3D" })).getByRole("radio", { name: "24 bits" }),
     ).toBeChecked();
+    // Espera o save da geometria terminar antes da próxima escolha.
+    await waitFor(() =>
+      expect(within(geometry).getByRole("radio", { name: "Precisa (PGXP)" })).not.toBeDisabled(),
+    );
+    const texture = screen.getByRole("radiogroup", { name: "Textura do 3D" });
+    fireEvent.click(within(texture).getByRole("radio", { name: "Suavizada" }));
+    expect(saveMock).toHaveBeenLastCalledWith("playstation", {
+      resume: true,
+      image: { ...recommended, resolution: "4x", geometry: "precise", texture: "bilinear" },
+    });
 
     cleanup();
     render(<Harness />);
@@ -340,6 +351,7 @@ describe("SettingsDialog", () => {
         resolutions: ["1x"],
         colorDepths: ["15-bit"],
         geometries: ["native"],
+        textures: ["nearest"],
         palettes: ["core", "dmg", "pocket"],
         scalers: ["nearest", "epx", "mmpx", "sharp-bilinear"],
         original: { palette: "core", scaler: "nearest" },

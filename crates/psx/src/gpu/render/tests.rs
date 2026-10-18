@@ -569,6 +569,7 @@ fn true_color_and_precise_geometry_do_not_touch_native_vram() {
             r.set_enhancements(Enhancements {
                 true_color: true,
                 precise_geometry: true,
+                texture_filtering: true,
                 ..at_scale(scale)
             });
             // Frações para todos os vértices possíveis da cena não mudam a
@@ -669,6 +670,135 @@ fn true_color_modulates_textures_in_8_bits() {
     send(&mut r, &[0x6400_4040, xy(0, 0), 0, (1 << 16) | 1]);
     assert_eq!(hi_pixel_24(&r, 0, 0), MASK_24 | 0x007F_0000);
     assert_eq!(r.pixel(0, 0), 0x800F);
+}
+
+/// Renderizador com filtragem e uma textura de 15 bits em x = 64, linha 0.
+fn filtering_with_row(texels: &[u16], true_color: bool) -> Renderer {
+    let mut r = renderer();
+    r.set_enhancements(Enhancements {
+        true_color,
+        texture_filtering: true,
+        ..at_scale(2)
+    });
+    for (i, &texel) in texels.iter().enumerate() {
+        r.vram[64 + i] = texel;
+    }
+    r
+}
+
+fn texture_15_bit_at_64() -> Texture {
+    Texture {
+        base_x: 64,
+        base_y: 0,
+        depth: Depth::Bits15,
+        clut_x: 0,
+        clut_y: 0,
+        raw: true,
+    }
+}
+
+/// Coordenada de textura em ponto fixo.
+fn fixed(texel: f64) -> i64 {
+    (texel * f64::from(1 << FRAC)) as i64
+}
+
+#[test]
+fn filtering_mixes_opaque_neighbors() {
+    let r = filtering_with_row(&[0x001F, 0x7C00], true);
+    let t = texture_15_bit_at_64();
+    // Em cima de um texel: ele mesmo.
+    assert_eq!(r.filtered_texel(&t, 0, 0), Some((0x00FF_0000, false)));
+    // No meio: metade vermelho, metade azul.
+    assert_eq!(
+        r.filtered_texel(&t, fixed(0.5), 0),
+        Some((0x0080_0080, false))
+    );
+    // Um quarto do caminho.
+    assert_eq!(
+        r.filtered_texel(&t, fixed(0.25), 0),
+        Some((0x00BF_0040, false))
+    );
+}
+
+#[test]
+fn filtering_never_darkens_against_transparent_texels() {
+    let r = filtering_with_row(&[0x001F, 0x0000], true);
+    let t = texture_15_bit_at_64();
+    // O transparente não entra na conta: a borda segue vermelha pura.
+    assert_eq!(
+        r.filtered_texel(&t, fixed(0.25), 0),
+        Some((0x00FF_0000, false))
+    );
+    // Com mais da metade do peso transparente, o pixel some.
+    assert_eq!(r.filtered_texel(&t, fixed(0.75), 0), None);
+    assert_eq!(r.filtered_texel(&t, fixed(0.5), 0), None, "empate some");
+}
+
+#[test]
+fn filtering_keeps_the_heaviest_semi_transparency_bit() {
+    let r = filtering_with_row(&[0x801F, 0x7C00], true);
+    let t = texture_15_bit_at_64();
+    assert_eq!(
+        r.filtered_texel(&t, fixed(0.25), 0).map(|c| c.1),
+        Some(true)
+    );
+    assert_eq!(
+        r.filtered_texel(&t, fixed(0.75), 0).map(|c| c.1),
+        Some(false)
+    );
+}
+
+/// Triângulo raw que estica os texels 0..2 em 8 pixels de largura.
+fn stretched_triangle(r: &mut Renderer) {
+    let page = (1 | (2 << 7)) << 16;
+    send(
+        r,
+        &[
+            0x2580_8080,
+            xy(0, 0),
+            0,
+            xy(8, 0),
+            page | 2,
+            xy(0, 8),
+            2 << 8,
+        ],
+    );
+}
+
+#[test]
+fn filtered_polygon_creates_in_between_colors_only_upscaled() {
+    let texels = [0x001F, 0x7C00, 0x03E0];
+    let mut nearest = filtering_with_row(&texels, true);
+    nearest.set_enhancements(Enhancements {
+        true_color: true,
+        ..at_scale(2)
+    });
+    stretched_triangle(&mut nearest);
+    let mut filtered = filtering_with_row(&texels, true);
+    stretched_triangle(&mut filtered);
+    assert_eq!(filtered.vram, nearest.vram, "VRAM 1× igual");
+    let colors_nearest = distinct_24(&nearest);
+    let colors_filtered = distinct_24(&filtered);
+    assert!(colors_filtered.len() > colors_nearest.len());
+    assert!(colors_filtered.contains(&0x0080_0080), "vermelho com azul");
+}
+
+#[test]
+fn filtering_without_true_color_stays_in_15_bits() {
+    let mut r = filtering_with_row(&[0x001F, 0x7C00, 0x03E0], false);
+    stretched_triangle(&mut r);
+    for p in distinct_24(&r) {
+        assert_eq!(expand(compress(p)), p, "{p:06X} não é 15 bits");
+    }
+}
+
+#[test]
+fn rectangles_are_never_filtered() {
+    let mut r = filtering_with_row(&[0x001F, 0x7C00], true);
+    send(&mut r, &[0xE100_0000 | 1 | (2 << 7)]);
+    send(&mut r, &[0x6500_0000, xy(10, 10), 0, (1 << 16) | 2]);
+    assert_eq!(hi_pixel_24(&r, 21, 20), 0x00FF_0000);
+    assert_eq!(hi_pixel_24(&r, 22, 20), 0x0000_00FF);
 }
 
 #[test]

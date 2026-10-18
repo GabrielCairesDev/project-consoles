@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use player::controls::{BindingError, Bindings, System};
 use player::image::{
     AspectRatio, ColorDepth, Fit, FrameBlend, Geometry, ImageSettings, Palette, Resolution, Scaler,
-    ScreenEffect, Signal,
+    ScreenEffect, Signal, TextureFilter,
 };
 use serde::{Deserialize, Serialize};
 
@@ -90,6 +90,8 @@ pub struct ImageChoices {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub geometry: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub texture: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub palette: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scaler: Option<String>,
@@ -111,6 +113,7 @@ impl From<ImageSettings> for ImageChoices {
             resolution: Some(image.resolution.id().to_owned()),
             color_depth: Some(image.color_depth.id().to_owned()),
             geometry: Some(image.geometry.id().to_owned()),
+            texture: Some(image.texture.id().to_owned()),
             palette: Some(image.palette.id().to_owned()),
             scaler: Some(image.scaler.id().to_owned()),
             aspect: Some(image.aspect.id().to_owned()),
@@ -146,6 +149,12 @@ const GEOMETRY: Technique<Geometry> = Technique {
     name: "a geometria",
     from_id: Geometry::from_id,
     available: Geometry::available,
+};
+
+const TEXTURE: Technique<TextureFilter> = Technique {
+    name: "a textura",
+    from_id: TextureFilter::from_id,
+    available: TextureFilter::available,
 };
 
 const PALETTE: Technique<Palette> = Technique {
@@ -232,6 +241,7 @@ impl ImageChoices {
             resolution: Some(Resolution::Native.id().to_owned()),
             color_depth: Some(ColorDepth::Native.id().to_owned()),
             geometry: Some(Geometry::Native.id().to_owned()),
+            texture: Some(TextureFilter::Nearest.id().to_owned()),
             palette: Some(Palette::Core.id().to_owned()),
             scaler: Some(Scaler::Nearest.id().to_owned()),
             ..Self::default()
@@ -255,6 +265,7 @@ impl ImageChoices {
                 recommended.color_depth,
             ),
             geometry: GEOMETRY.resolve(system, self.geometry.as_deref(), recommended.geometry),
+            texture: TEXTURE.resolve(system, self.texture.as_deref(), recommended.texture),
             palette: PALETTE.resolve(system, self.palette.as_deref(), recommended.palette),
             scaler: SCALER.resolve(system, self.scaler.as_deref(), recommended.scaler),
             aspect: ASPECT.resolve(system, self.aspect.as_deref(), recommended.aspect),
@@ -271,6 +282,7 @@ impl ImageChoices {
         RESOLUTION.check(system, self.resolution.as_deref())?;
         COLOR_DEPTH.check(system, self.color_depth.as_deref())?;
         GEOMETRY.check(system, self.geometry.as_deref())?;
+        TEXTURE.check(system, self.texture.as_deref())?;
         PALETTE.check(system, self.palette.as_deref())?;
         SCALER.check(system, self.scaler.as_deref())?;
         ASPECT.check(system, self.aspect.as_deref())?;
@@ -546,6 +558,7 @@ mod tests {
             resolution: Some("4x".to_owned()),
             color_depth: Some("24-bit".to_owned()),
             geometry: Some("precise".to_owned()),
+            texture: Some("bilinear".to_owned()),
             ..ImageChoices::default()
         };
         assert_eq!(sharp_3d.check(System::PlayStation), Ok(()));

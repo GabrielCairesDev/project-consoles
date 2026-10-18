@@ -4,7 +4,7 @@
 //! compilação, e o laço do player não precisa de despacho dinâmico.
 
 use crate::controls::{Action, System};
-use crate::image::{ColorDepth, Geometry, ImageSettings, Resolution};
+use crate::image::{ColorDepth, Geometry, ImageSettings, Resolution, TextureFilter};
 use crate::resample::Resampler;
 
 /// Maior quadro entre os consoles de cartucho (o Genesis em H40): define a
@@ -123,6 +123,7 @@ impl Machine {
                 },
                 true_color: image.color_depth == ColorDepth::TrueColor,
                 precise_geometry: image.geometry == Geometry::Precise,
+                texture_filtering: image.texture == TextureFilter::Bilinear,
             });
         }
     }

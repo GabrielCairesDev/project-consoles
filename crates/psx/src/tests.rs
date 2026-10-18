@@ -89,13 +89,16 @@ fn enhancements_round_trip_and_default_to_native() {
         assert_eq!(resolution.scale(), scale);
         for true_color in [false, true] {
             for precise_geometry in [false, true] {
-                let enhancements = Enhancements {
-                    resolution,
-                    true_color,
-                    precise_geometry,
-                };
-                console.set_enhancements(enhancements);
-                assert_eq!(console.enhancements(), enhancements);
+                for texture_filtering in [false, true] {
+                    let enhancements = Enhancements {
+                        resolution,
+                        true_color,
+                        precise_geometry,
+                        texture_filtering,
+                    };
+                    console.set_enhancements(enhancements);
+                    assert_eq!(console.enhancements(), enhancements);
+                }
             }
         }
     }

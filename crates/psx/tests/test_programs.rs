@@ -215,6 +215,7 @@ fn gpu_programs_ignore_enhancements() {
             resolution: psx::InternalResolution::X4,
             true_color: true,
             precise_geometry: true,
+            texture_filtering: true,
         });
         assert!(
             native == enhanced,
@@ -362,18 +363,20 @@ fn enhancements_speed() {
     let mut reference = None;
     let cases = (1..=4).flat_map(|scale| {
         let resolution = psx::InternalResolution::from_scale(scale).expect("escala de 1 a 4");
-        [false, true].map(|all| psx::Enhancements {
+        // Nada; 24 bits + PGXP; e ainda a filtragem de textura.
+        [(false, false), (true, false), (true, true)].map(|(all, filter)| psx::Enhancements {
             resolution,
             true_color: all,
             precise_geometry: all,
+            texture_filtering: filter,
         })
     });
     for enhancements in cases {
         let scale = enhancements.resolution.scale();
-        let extras = if enhancements.true_color {
-            "+24 bits+PGXP"
-        } else {
-            ""
+        let extras = match (enhancements.true_color, enhancements.texture_filtering) {
+            (_, true) => "+24 bits+PGXP+filtro",
+            (true, false) => "+24 bits+PGXP",
+            (false, false) => "",
         };
         let mut console = console(&dir);
         console.set_enhancements(enhancements);
@@ -401,11 +404,7 @@ fn enhancements_speed() {
             save_png(
                 &Path::new(&out).join(format!(
                     "{scale}x{}.png",
-                    if extras.is_empty() {
-                        ""
-                    } else {
-                        "-24bits-pgxp"
-                    }
+                    extras.replace(' ', "").replace('+', "-").to_lowercase()
                 )),
                 &console,
             );

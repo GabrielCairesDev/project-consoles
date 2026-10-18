@@ -871,11 +871,13 @@ mod tests {
                 resolution: psx::InternalResolution::X2,
                 true_color: true,
                 precise_geometry: false,
+                texture_filtering: false,
             }
         );
         machine.set_core_image(ImageSettings {
             resolution: image::Resolution::X4,
             geometry: image::Geometry::Precise,
+            texture: image::TextureFilter::Bilinear,
             ..ImageSettings::recommended(ps1)
         });
         assert_eq!(
@@ -884,6 +886,7 @@ mod tests {
                 resolution: psx::InternalResolution::X4,
                 true_color: true,
                 precise_geometry: true,
+                texture_filtering: true,
             }
         );
         machine.set_core_image(ImageSettings::original(ps1));

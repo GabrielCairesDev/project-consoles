@@ -15,6 +15,9 @@ export type ColorDepth = "15-bit" | "24-bit";
 /** Precisão dos vértices; espelha `player::image::Geometry::id`. */
 export type Geometry = "native" | "precise";
 
+/** Filtragem das texturas 3D; espelha `player::image::TextureFilter::id`. */
+export type TextureFilter = "nearest" | "bilinear";
+
 /** Cores da tela; espelha `player::image::Palette::id`. */
 export type Palette = "core" | "dmg" | "pocket";
 
@@ -38,6 +41,7 @@ export interface ImageChoices {
   resolution?: Resolution;
   colorDepth?: ColorDepth;
   geometry?: Geometry;
+  texture?: TextureFilter;
   palette?: Palette;
   scaler?: Scaler;
   aspect?: AspectRatio;
@@ -55,6 +59,8 @@ export interface ImageInfo {
   colorDepths: ColorDepth[];
   /** Precisões de geometria. */
   geometries: Geometry[];
+  /** Filtragens de textura. */
+  textures: TextureFilter[];
   /** Paletas do console, na ordem de exibição. */
   palettes: Palette[];
   /** Ampliações do console, na ordem de exibição. */
@@ -82,6 +88,7 @@ const TECHNIQUES = [
   "resolution",
   "colorDepth",
   "geometry",
+  "texture",
   "palette",
   "signal",
   "blend",

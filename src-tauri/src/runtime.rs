@@ -51,6 +51,8 @@ pub const RESOLUTION_FLAG: &str = "--resolution";
 pub const COLOR_FLAG: &str = "--color";
 /// Argumento com a geometria ([`player::image::Geometry::id`]).
 pub const GEOMETRY_FLAG: &str = "--geometry";
+/// Argumento com a filtragem de textura ([`player::image::TextureFilter::id`]).
+pub const TEXTURE_FLAG: &str = "--texture";
 
 /// Núcleo que roda jogos deste console, se houver.
 pub fn system_for(console_id: &str) -> Option<System> {
@@ -160,7 +162,9 @@ fn play_command(exe: &Path, rom: &Path, options: &LaunchOptions) -> Command {
         .arg(COLOR_FLAG)
         .arg(options.image.color_depth.id())
         .arg(GEOMETRY_FLAG)
-        .arg(options.image.geometry.id());
+        .arg(options.image.geometry.id())
+        .arg(TEXTURE_FLAG)
+        .arg(options.image.texture.id());
     if let Some(state) = &options.state_path {
         command.arg(STATE_FLAG).arg(state);
     }
@@ -360,7 +364,9 @@ pub(crate) mod tests {
                 COLOR_FLAG,
                 "15-bit",
                 GEOMETRY_FLAG,
-                "native"
+                "native",
+                TEXTURE_FLAG,
+                "nearest"
             ]
         );
         let with_state = LaunchOptions {
@@ -397,6 +403,8 @@ pub(crate) mod tests {
                 "15-bit",
                 GEOMETRY_FLAG,
                 "native",
+                TEXTURE_FLAG,
+                "nearest",
                 STATE_FLAG,
                 "/dados/sonic.state",
                 BATTERY_FLAG,
@@ -420,7 +428,7 @@ pub(crate) mod tests {
             ..options()
         };
         assert_eq!(
-            args(&plain)[6..26],
+            args(&plain)[6..28],
             [
                 SCALER_FLAG,
                 "nearest",
@@ -441,7 +449,9 @@ pub(crate) mod tests {
                 COLOR_FLAG,
                 "15-bit",
                 GEOMETRY_FLAG,
-                "native"
+                "native",
+                TEXTURE_FLAG,
+                "nearest"
             ]
         );
     }
