@@ -26,6 +26,7 @@ ureq = "3.4.2"
 png = "0.18.1"
 tauri-plugin-dialog = "2.8.3"
 player = { path = "../crates/player" }
+psx = { path = "../crates/psx" }
 
 
 

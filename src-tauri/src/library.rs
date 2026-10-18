@@ -2,7 +2,8 @@
 //!
 //! Uma única pasta (com subpastas) guarda os jogos de todos os consoles. Cada
 //! arquivo é identificado pelos DATs; o console vem do DAT que o reconheceu,
-//! ou da extensão quando ela é exclusiva de um sistema.
+//! ou da extensão quando ela é exclusiva de um sistema. Discos são
+//! reconhecidos pelo número de série no DAT Redump do sistema.
 //!
 //! Calcular o CRC de ROMs grandes custa caro, então o resultado fica em um
 //! índice persistente chaveado por caminho, tamanho e data de modificação:
@@ -21,7 +22,7 @@ use crate::systems;
 
 /// Versão do formato do índice. Mudanças na forma de identificar exigem
 /// incrementá-la, para descartar valores antigos incompatíveis.
-const CACHE_VERSION: u32 = 3;
+const CACHE_VERSION: u32 = 4;
 
 /// Extensões usadas também por arquivos que não são jogos. Sem
 /// reconhecimento no DAT, ficam fora da lista.
@@ -38,7 +39,8 @@ pub struct Game {
     /// Estável na biblioteca: caminho relativo à pasta, com `/`.
     pub id: String,
     pub console_id: String,
-    /// Nome No-Intro quando reconhecido; senão, o nome do arquivo sem extensão.
+    /// Nome No-Intro (ou Redump, em discos) quando reconhecido; senão, o nome
+    /// do arquivo sem extensão.
     pub title: String,
     pub file_name: String,
     pub recognized: bool,
@@ -49,7 +51,7 @@ pub struct Game {
     pub has_game_save: bool,
     #[serde(skip)]
     pub path: PathBuf,
-    /// Nome No-Intro, usado para localizar a capa.
+    /// Nome No-Intro (ou Redump, em discos), usado para localizar a capa.
     #[serde(skip)]
     pub no_intro_name: Option<String>,
 }
@@ -228,7 +230,14 @@ fn game_for(
     let (console_id, no_intro_name) = match identify(rom.fingerprint) {
         Some((console_id, name)) => (console_id, Some(name)),
         None if ambiguous => return None,
-        None => (systems::for_extension(&rom.extension)?.console_id, None),
+        None => {
+            let system = systems::for_extension(&rom.extension)?;
+            let disc_name = rom
+                .disc
+                .as_ref()
+                .and_then(|disc| system.disc_name(&disc.serial, disc.first_file_size));
+            (system.console_id, disc_name.map(str::to_owned))
+        }
     };
     let file_name = path
         .file_name()
@@ -431,6 +440,80 @@ mod tests {
             "PS1/Crash Bandicoot (USA)/Crash Bandicoot (USA).cue"
         );
         assert!(!crash.recognized);
+    }
+
+    /// Trilha 1 de um disco ISO 9660 cujo `SYSTEM.CNF` tem `boot`.
+    fn disc_image(boot: &str) -> Vec<u8> {
+        const SECTOR: usize = 2352;
+        const DATA: usize = 24;
+        let mut image = vec![0; 21 * SECTOR];
+        let mut put = |lba: usize, at: usize, bytes: &[u8]| {
+            let start = lba * SECTOR + DATA + at;
+            image[start..start + bytes.len()].copy_from_slice(bytes);
+        };
+        let record = |name: &[u8], lba: u32, size: u32, flags: u8| {
+            let mut r = vec![0; 34 + name.len()];
+            r[0] = r.len() as u8;
+            r[2..6].copy_from_slice(&lba.to_le_bytes());
+            r[10..14].copy_from_slice(&size.to_le_bytes());
+            r[25] = flags;
+            r[32] = name.len() as u8;
+            r[33..33 + name.len()].copy_from_slice(name);
+            r
+        };
+        put(16, 0, b"\x01CD001");
+        put(16, 156, &record(b"\0", 18, 2048, 2));
+        put(18, 0, &record(b"SYSTEM.CNF;1", 20, boot.len() as u32, 0));
+        put(20, 0, boot.as_bytes());
+        image
+    }
+
+    #[test]
+    fn playstation_discs_are_recognized_by_serial() {
+        let dir = tempfile::tempdir().expect("pasta");
+        write(
+            dir.path(),
+            "meu crash.cue",
+            b"FILE \"meu crash.bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n",
+        );
+        write(
+            dir.path(),
+            "meu crash.bin",
+            &disc_image("BOOT = cdrom:\\SCUS_949.00;1\r\nTCB = 4\r\n"),
+        );
+        write(
+            dir.path(),
+            "caseiro.cue",
+            b"FILE \"caseiro.bin\" BINARY\n  TRACK 01 MODE2/2352\n    INDEX 01 00:00:00\n",
+        );
+        write(
+            dir.path(),
+            "caseiro.bin",
+            &disc_image("BOOT = cdrom:\\SLUS_999.99;1\r\n"),
+        );
+        let mut cache = FingerprintCache::default();
+        let games = scan(dir.path(), &mut cache, dat(&[])).expect("varredura");
+
+        assert_eq!(
+            summary(&games),
+            [
+                ("caseiro.cue", "playstation", "caseiro", false),
+                (
+                    "meu crash.cue",
+                    "playstation",
+                    "Crash Bandicoot (USA)",
+                    true
+                ),
+            ]
+        );
+        assert_eq!(
+            games[1].no_intro_name.as_deref(),
+            Some("Crash Bandicoot (USA)"),
+            "a capa vem do nome Redump, não do arquivo"
+        );
+        // O número de série fica no índice: a próxima varredura não relê.
+        let again = scan(dir.path(), &mut cache, dat(&[])).expect("varredura");
+        assert_eq!(again, games);
     }
 
     #[test]

@@ -3175,6 +3175,7 @@ dependencies = [
  "crc32fast",
  "player",
  "png 0.18.1",
+ "psx",
  "serde",
  "serde_json",
  "tauri",

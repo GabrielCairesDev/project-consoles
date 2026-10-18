@@ -3,6 +3,9 @@
 //! Só o necessário para identificar ROMs: cada linha `rom ( … size N crc X … )`
 //! é indexada por `(tamanho, CRC32)` e aponta para o `name` do `game` que a
 //! contém. Não há dependência externa: o formato é estável e orientado a linhas.
+//!
+//! Discos (Redump) são grandes demais para o CRC na varredura; o índice deles
+//! é pelo número de série do `game` ([`parse_serials`]).
 
 use std::collections::HashMap;
 
@@ -25,6 +28,83 @@ impl DatIndex {
     pub fn is_empty(&self) -> bool {
         self.by_fingerprint.is_empty()
     }
+}
+
+/// Índice de discos pelo número de série.
+#[derive(Debug, Default)]
+pub struct SerialIndex {
+    /// Discos de cada número, na ordem do DAT: (tamanho do primeiro arquivo,
+    /// nome).
+    by_serial: HashMap<String, Vec<(u64, String)>>,
+}
+
+impl SerialIndex {
+    /// Nome Redump do disco. Revisões e versões do mesmo jogo podem repetir
+    /// o número; vale a de primeiro arquivo do mesmo tamanho e, sem ela, a
+    /// primeira do DAT.
+    pub fn lookup(&self, serial: &str, first_file_size: u64) -> Option<&str> {
+        let discs = self.by_serial.get(serial)?;
+        discs
+            .iter()
+            .find(|(size, _)| *size == first_file_size)
+            .or(discs.first())
+            .map(|(_, name)| name.as_str())
+    }
+
+    pub fn len(&self) -> usize {
+        self.by_serial.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.by_serial.is_empty()
+    }
+}
+
+/// Monta o índice de discos de um DAT Redump do libretro: cada `game` com
+/// `serial "…"` (às vezes vários, separados por vírgula) e o tamanho da sua
+/// primeira `rom`.
+pub fn parse_serials(text: &str) -> SerialIndex {
+    #[derive(Default)]
+    struct Disc<'a> {
+        name: Option<&'a str>,
+        serial: Option<&'a str>,
+        size: Option<u64>,
+    }
+    let mut index = SerialIndex::default();
+    let mut add = |disc: &Disc| {
+        let (Some(name), Some(serials)) = (disc.name, disc.serial) else {
+            return;
+        };
+        for serial in serials.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            index
+                .by_serial
+                .entry(serial.to_owned())
+                .or_default()
+                .push((disc.size.unwrap_or(0), name.to_owned()));
+        }
+    };
+    let mut current: Option<Disc> = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with("game (") {
+            if let Some(disc) = current.take() {
+                add(&disc);
+            }
+            current = Some(Disc::default());
+        } else if let Some(disc) = current.as_mut() {
+            if let Some(rest) = line.strip_prefix("name ") {
+                disc.name = disc.name.or(quoted(rest));
+            } else if let Some(rest) = line.strip_prefix("serial ") {
+                disc.serial = disc.serial.or(quoted(rest));
+            } else if line.starts_with("rom (") && disc.size.is_none() {
+                disc.size = field(line, "size").and_then(|size| size.parse().ok());
+            }
+        }
+    }
+    if let Some(disc) = current {
+        add(&disc);
+    }
+    index
 }
 
 /// Monta o índice a partir do texto de um DAT. Linhas malformadas são
@@ -150,6 +230,56 @@ game (
         let index = parse(SAMPLE);
 
         assert_eq!(index.len(), 3);
+    }
+
+    const DISCS: &str = r#"clrmamepro (
+	name "Sony - PlayStation"
+	serial "NAO-E-JOGO"
+)
+
+game (
+	name "Ace Combat 2 (Japan)"
+	serial "SLPS-00830"
+	rom ( name "Ace Combat 2 (Japan) (Track 1).bin" size 580273680 crc 1 serial "SLPS-00830" )
+	rom ( name "Ace Combat 2 (Japan) (Track 2).bin" size 999 crc 2 )
+)
+game (
+	name "Ace Combat 2 (Japan) (Rev 1)"
+	serial "SLPS-00830"
+	rom ( name "Ace Combat 2 (Japan) (Rev 1) (Track 1).bin" size 580271328 crc 3 )
+)
+game (
+	name "Dois Numeros (USA)"
+	serial "SLUS-00001, SLUS-00002"
+	rom ( name "x.bin" size 10 crc 4 )
+)
+game (
+	name "Sem Numero (USA)"
+	rom ( name "y.bin" size 10 crc 5 )
+)
+"#;
+
+    #[test]
+    fn discs_are_found_by_serial_and_first_file_size() {
+        let index = parse_serials(DISCS);
+
+        assert_eq!(index.len(), 3, "sem o cabeçalho e o jogo sem número");
+        assert_eq!(
+            index.lookup("SLPS-00830", 580_271_328),
+            Some("Ace Combat 2 (Japan) (Rev 1)")
+        );
+        assert_eq!(
+            index.lookup("SLPS-00830", 580_273_680),
+            Some("Ace Combat 2 (Japan)")
+        );
+        assert_eq!(
+            index.lookup("SLPS-00830", 999),
+            Some("Ace Combat 2 (Japan)"),
+            "tamanho desconhecido: o primeiro do DAT"
+        );
+        assert_eq!(index.lookup("SLUS-00002", 10), Some("Dois Numeros (USA)"));
+        assert_eq!(index.lookup("SLUS-99999", 10), None);
+        assert_eq!(parse_serials("").len(), 0);
     }
 
     #[test]

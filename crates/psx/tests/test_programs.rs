@@ -326,6 +326,18 @@ fn gte_fuzz_matches_hardware_log() {
 }
 
 #[test]
+#[ignore = "precisa de um jogo (PSX_DISC)"]
+fn real_disc_has_a_serial() {
+    let disc = std::env::var_os("PSX_DISC").expect("defina PSX_DISC");
+    let disc = psx::Disc::open(Path::new(&disc)).expect("imagem válida");
+    let serial = disc.serial().expect("número de série no SYSTEM.CNF");
+    println!(
+        "{serial}: primeiro arquivo de {} bytes",
+        disc.first_file_size()
+    );
+}
+
+#[test]
 #[ignore = "precisa do BIOS (PSX_TESTS_DIR) e de um jogo (PSX_DISC)"]
 fn bios_boots_the_game_from_disc() {
     let (Some(dir), Some(disc)) = (tests_dir(), std::env::var_os("PSX_DISC")) else {

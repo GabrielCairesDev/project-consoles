@@ -2,15 +2,17 @@
 //! extensões próprias, formato de normalização e DAT No-Intro embutido.
 //!
 //! Cada extensão pertence a um único sistema; ela define como normalizar os
-//! bytes. Discos (PlayStation) não têm DAT embutido: o jogo vem do `.cue` e
-//! o título do nome do arquivo. A identificação final consulta os DATs de todos os sistemas, então
+//! bytes. A identificação final consulta os DATs de todos os sistemas, então
 //! uma ROM com extensão trocada ainda é reconhecida.
+//!
+//! Discos (PlayStation) não entram pelo CRC: o jogo vem do `.cue` e é
+//! reconhecido pelo número de série gravado no disco, no DAT Redump.
 //!
 //! DATs: libretro-database (CC-BY-SA 4.0); ver `data/dats/SOURCES.md`.
 
 use std::sync::OnceLock;
 
-use crate::dat::{self, DatIndex};
+use crate::dat::{self, DatIndex, SerialIndex};
 
 /// Como os bytes da ROM devem ser normalizados antes do CRC32, para bater
 /// com o dump de referência do No-Intro.
@@ -39,6 +41,9 @@ pub struct System {
     /// extensão.
     dat: Option<&'static str>,
     index: OnceLock<DatIndex>,
+    /// DAT Redump dos discos, consultado pelo número de série.
+    serials: Option<&'static str>,
+    serial_index: OnceLock<SerialIndex>,
 }
 
 impl System {
@@ -48,10 +53,19 @@ impl System {
             .get_or_init(|| dat::parse(self.dat.unwrap_or_default()))
     }
 
-    /// `true` se o sistema tem DAT embutido (cartuchos); discos são
-    /// reconhecidos só pela extensão.
+    /// `true` se o sistema tem DAT embutido por CRC (cartuchos). Discos são
+    /// reconhecidos pelo número de série ([`Self::disc_name`]).
     pub fn has_dat(&self) -> bool {
         self.dat.is_some()
+    }
+
+    /// Nome Redump do disco com esse número de série, se o sistema tiver
+    /// discos e o número for conhecido.
+    pub fn disc_name(&self, serial: &str, first_file_size: u64) -> Option<&str> {
+        let text = self.serials?;
+        self.serial_index
+            .get_or_init(|| dat::parse_serials(text))
+            .lookup(serial, first_file_size)
     }
 
     /// `true` se a extensão é deste sistema.
@@ -89,6 +103,29 @@ const fn system(
         has_embedded_icon,
         dat,
         index: OnceLock::new(),
+        serials: None,
+        serial_index: OnceLock::new(),
+    }
+}
+
+/// Sistema de discos: só o `.cue` (os `.bin` são grandes demais para o CRC e
+/// a extensão é do Mega Drive), reconhecido pelo número de série.
+const fn disc_system(
+    console_id: &'static str,
+    libretro_name: &'static str,
+    extensions: &'static [&'static str],
+    serials: &'static str,
+) -> System {
+    System {
+        console_id,
+        libretro_name,
+        extensions,
+        format: RomFormat::Plain,
+        has_embedded_icon: false,
+        dat: None,
+        index: OnceLock::new(),
+        serials: Some(serials),
+        serial_index: OnceLock::new(),
     }
 }
 
@@ -173,15 +210,11 @@ static SYSTEMS: [System; 11] = [
         false,
         Some(dat_file!("Nintendo - Nintendo 3DS")),
     ),
-    // Só o `.cue`: o `.bin` do disco é do Mega Drive na varredura, e os
-    // `.bin` grandes nem são lidos.
-    system(
+    disc_system(
         "playstation",
         "Sony - PlayStation",
         &["cue"],
-        RomFormat::Plain,
-        false,
-        None,
+        dat_file!("Sony - PlayStation"),
     ),
 ];
 
@@ -287,7 +320,18 @@ mod tests {
         let playstation = for_console("playstation").expect("PlayStation é suportado");
         assert!(playstation.accepts("CUE"));
         assert!(!playstation.accepts("bin"), "o .bin é do Mega Drive");
-        assert_eq!(playstation.dat_index().len(), 0, "sem DAT");
+        assert_eq!(playstation.dat_index().len(), 0, "sem DAT por CRC");
+        assert_eq!(
+            playstation.disc_name("SCUS-94900", 632_083_536),
+            Some("Crash Bandicoot (USA)")
+        );
+        assert_eq!(playstation.disc_name("SCUS-00000", 0), None);
+        let snes = for_console("snes").expect("SNES");
+        assert_eq!(
+            snes.disc_name("SCUS-94900", 632_083_536),
+            None,
+            "sem discos"
+        );
         assert!(for_console("playstation-2").is_none());
         assert!(for_console("inexistente").is_none());
     }

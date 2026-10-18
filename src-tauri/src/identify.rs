@@ -29,6 +29,18 @@ pub struct RomFile {
     pub fingerprint: Fingerprint,
     /// Extensão da ROM em minúsculas; num `.zip`, a do arquivo de dentro.
     pub extension: String,
+    /// Identidade do disco, para imagens de disco (`.cue`) que a têm.
+    #[serde(default)]
+    pub disc: Option<DiscId>,
+}
+
+/// O que identifica um disco no DAT Redump.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiscId {
+    /// Número de série do `SYSTEM.CNF` (ex.: `SCUS-94900`).
+    pub serial: String,
+    /// Tamanho do primeiro `.bin`, que separa revisões do mesmo número.
+    pub first_file_size: u64,
 }
 
 /// Lê a ROM em `path`. `Ok(None)` quando não é ROM de nenhum sistema: extensão
@@ -46,10 +58,27 @@ pub fn read_rom(path: &Path) -> io::Result<Option<RomFile>> {
     let file = File::open(path)?;
     let size = file.metadata()?.len();
     let fingerprint = stream_fingerprint(BufReader::new(file), size, system.format)?;
+    let disc = (extension == "cue").then(|| disc_id(path)).flatten();
     Ok(Some(RomFile {
         fingerprint,
         extension,
+        disc,
     }))
+}
+
+/// Número de série do disco do `.cue`. Uma imagem que não abre ainda entra
+/// na biblioteca, sem reconhecimento; o erro aparece ao jogar.
+fn disc_id(cue: &Path) -> Option<DiscId> {
+    match psx::Disc::open(cue) {
+        Ok(disc) => disc.serial().map(|serial| DiscId {
+            serial,
+            first_file_size: disc.first_file_size(),
+        }),
+        Err(error) => {
+            eprintln!("não foi possível abrir o disco {}: {error}", cue.display());
+            None
+        }
+    }
 }
 
 /// Extensão em minúsculas, se for UTF-8 válido.
@@ -172,6 +201,7 @@ fn zip_rom(reader: impl Read + Seek) -> io::Result<Option<RomFile>> {
                 crc32: entry.crc32(),
             },
             extension,
+            disc: None,
         });
     }
     Ok(found)
@@ -271,6 +301,7 @@ mod tests {
                     crc32: crc(&rom)
                 },
                 extension: "gba".into(),
+                disc: None,
             })
         );
     }

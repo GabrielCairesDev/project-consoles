@@ -12,6 +12,8 @@ use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+mod serial;
+
 /// Tamanho de um setor bruto.
 pub(crate) const SECTOR_SIZE: usize = 2352;
 /// Setor absoluto do começo da trilha 1 (00:02:00).

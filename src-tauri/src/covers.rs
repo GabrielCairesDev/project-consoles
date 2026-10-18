@@ -2,9 +2,9 @@
 //!
 //! Ordem de resolução:
 //! 1. capa de caixa já em cache;
-//! 2. download do acervo libretro-thumbnails (pelo nome No-Intro; em discos,
-//!    que não têm DAT embutido, pelo nome do arquivo, que segue o Redump
-//!    usado pelo acervo). Quando a capa não existe lá, um marcador evita
+//! 2. download do acervo libretro-thumbnails (pelo nome No-Intro ou Redump
+//!    reconhecido; num disco não reconhecido, pelo nome do arquivo, que
+//!    costuma seguir o Redump). Quando a capa não existe lá, um marcador evita
 //!    perguntar de novo. Sem rede, nada é marcado e a próxima abertura tenta
 //!    outra vez;
 //! 3. ícone embutido na ROM (Nintendo DS), convertido para PNG.
@@ -128,8 +128,8 @@ fn percent_encode(segment: &str) -> String {
     out
 }
 
-/// Nome do jogo no acervo de capas: o No-Intro reconhecido ou, em sistemas
-/// sem DAT embutido (discos), o nome do arquivo sem a extensão, como
+/// Nome do jogo no acervo de capas: o No-Intro (ou Redump) reconhecido ou,
+/// num disco não reconhecido, o nome do arquivo sem a extensão, como
 /// "Crash Bandicoot (USA)". Um cartucho não reconhecido não tem nome lá.
 fn archive_name(system: &System, game: &Game) -> Option<String> {
     if let Some(name) = &game.no_intro_name {
